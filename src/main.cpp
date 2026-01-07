@@ -569,7 +569,7 @@ void sendCardSearchCommand()
 void setup()
 {
   // 低功耗
-  // setCpuFrequencyMhz(80);
+   //setCpuFrequencyMhz(80);
 
   // 初始化调试串口
   Serial.begin(115200);
@@ -611,7 +611,7 @@ void setup()
   digitalWrite(EN_5V, LOW);
   digitalWrite(DAC_EN, LOW);
 
-  delay(1000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
   LOG_I("初始化完成");
 
@@ -624,8 +624,13 @@ void loop()
 
   // 进入浅睡眠
   LOG_I("进入浅睡眠");
+  gpio_hold_en((gpio_num_t)EN_5V);
+  gpio_hold_en((gpio_num_t)DAC_EN);
   vTaskDelay(pdMS_TO_TICKS(100));
   esp_light_sleep_start();
+  gpio_hold_dis((gpio_num_t)EN_5V);
+  gpio_hold_dis((gpio_num_t)DAC_EN);
+  vTaskDelay(pdMS_TO_TICKS(1));
   LOG_I("已唤醒");
 
   digitalWrite(EN_5V, HIGH);
