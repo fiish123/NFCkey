@@ -95,7 +95,6 @@ VolumeStream volume(i2s);                // volume to i2s
 EncodedAudioStream out(&volume, &helix); // output to volume
 StreamCopy copier;                       // copy in to decoder
 // 播放线程状态标记
-volatile bool isplayerinit = false;
 volatile bool isplaying = false;
 volatile bool isplListrun = false;
 volatile unsigned int arrsize = 0;
@@ -109,27 +108,21 @@ void player(void *parameter)
   const unsigned char *DATA = (const unsigned char *)parameter;
   MemoryStream data(DATA, arrsize);
 
-  if (!isplayerinit)
-  {
+  // i2s配置
+  auto cfg = i2s.defaultConfig();
+  cfg.sample_rate = 44100;
+  cfg.channels = 1;
+  cfg.pin_bck = CLK1_PIN;
+  cfg.pin_data = DATA1_PIN;
+  cfg.pin_ws = LRC1_PIN;
+  i2s.begin(cfg);
+  // 音量控制配置
+  volume.setVolume(VOLUME1);
+  volume.begin();
 
-    // i2s配置
-    auto cfg = i2s.defaultConfig();
-    cfg.sample_rate = 44100;
-    cfg.channels = 1;
-    cfg.pin_bck = CLK1_PIN;
-    cfg.pin_data = DATA1_PIN;
-    cfg.pin_ws = LRC1_PIN;
-    i2s.begin(cfg);
-    // 音量控制配置
-    volume.setVolume(VOLUME1);
-    volume.begin();
-
-    // 输出流配置
-    out.begin();
-    copier.begin(out, data);
-
-    isplayerinit = true;
-  }
+  // 输出流配置
+  out.begin();
+  copier.begin(out, data);
 
   auto info = out.decoder().audioInfo();
   LOGI("The audio rate from the mp3 file is %d", info.sample_rate);
@@ -142,22 +135,12 @@ void player(void *parameter)
     vTaskDelay(pdMS_TO_TICKS(5));
   }
 
-
-  if (!isplListrun)
-  {
-    helix.end();
-    i2s.end();
-    volume.end();
-    copier.end();
-    out.end();
-    data.end();
-
-    isplayerinit = false;
-
-    digitalWrite(DAC_EN, LOW);
-    LOG_I("播放任务完成~");
-  }
-
+  helix.end();
+  i2s.end();
+  volume.end();
+  copier.end();
+  out.end();
+  data.end();
   isplaying = false;
   vTaskDelete(NULL);
 }
@@ -187,13 +170,11 @@ void switchaudio(unsigned int in)
     break;
   case 3:
     // accept
-    // copier.begin(out, mp3_accept);
     choi = random(1, 4);
 
     switch (choi)
     {
     case 1:
-      // VOLUME1=0.65;
 
       // 卡
       arrsize = sizeof(accept_data);
@@ -201,7 +182,7 @@ void switchaudio(unsigned int in)
       break;
     case 2:
       // Ciallo～ (∠・ω< )⌒★
-      VOLUME1 = 0.9;
+      VOLUME1 = 0.8;
 
       arrsize = sizeof(accept_data_2);
       dataarr = (void *)accept_data_2;
@@ -258,26 +239,25 @@ void switchaudio(unsigned int in)
     break;
   }
 
-  // 主线程
+  // 音频解码线程
   xTaskCreatePinnedToCore(
       player,        // 任务函数
       pname.c_str(), // 任务名称
-      4096 ,      // 堆栈大小（字节）
+      4096,          // 堆栈大小（字节）
       dataarr,       // 参数
       3,             // 优先级
       &playerHandle, // 任务句柄
       0              // 核心编号
   );
-  // 创建任务
 }
 // 音源管理
 TaskHandle_t playerListHandle = NULL;
-unsigned char playlist[20]={};
+unsigned char playlist[20] = {};
 unsigned int playlistcount = 0, playlistindex = 0;
 void playerList(void *parameter)
 {
   isplListrun = true;
-  while (playlistcount > 0||isplaying)
+  while (playlistcount - playlistindex > 0 || isplaying)
   {
     if (!isplaying)
     {
@@ -289,6 +269,8 @@ void playerList(void *parameter)
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 
+  digitalWrite(DAC_EN, LOW);
+  LOG_I("播放任务完成~");
   playlistcount = 0;
   playlistindex = 0;
   isplListrun = false;
@@ -298,16 +280,17 @@ void playerList(void *parameter)
 // 添加播放任务到列表
 void addTolist(unsigned int in)
 {
+  digitalWrite(DAC_EN, HIGH);
+
   playlist[playlistcount] = in;
   playlistcount++;
   if (!isplListrun)
   {
-    digitalWrite(DAC_EN, HIGH);
     vTaskDelay(pdMS_TO_TICKS(100));
     xTaskCreatePinnedToCore(
         playerList,        // 任务函数
         "playerlist1",     // 任务名称
-        1024*2,              // 堆栈大小（字节）
+        1024 * 2,          // 堆栈大小（字节）
         NULL,              // 参数
         1,                 // 优先级
         &playerListHandle, // 任务句柄
@@ -455,7 +438,7 @@ NFCcard ReadCard()
   uint8_t bufferIndex = 0;   // 缓冲索引
   bool frameStarted = false; // 接收标志
   unsigned long lastReceiveTime = 0;
-  const unsigned long TIMEOUT_MS = 1000; // 超时时长
+  const unsigned long TIMEOUT_MS = 100; // 超时时长
 
   NFCcard readdata;
   readdata.uidLength = 0; // 初始化为无效状态
@@ -562,15 +545,27 @@ NFCcard ReadCard()
 // 读卡指令
 void sendCardSearchCommand()
 {
+  while (Serial1.available() > 0)
+  {
+    Serial1.read();
+  }
 
-  Serial1.read();
   // 寻卡指令
   uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
 
   // 通过Serial1发送指令
   Serial1.write(cardSearchCmd, sizeof(cardSearchCmd));
+  Serial1.flush();
 
-  vTaskDelay(pdMS_TO_TICKS(100));
+  unsigned long last, now;
+  last = millis();
+  now = last;
+  while (Serial1.available() < 14 && now - last < 100)
+  {
+    vTaskDelay(pdMS_TO_TICKS(1));
+    now = millis();
+  }
+  LOG_V("读卡耗时 %dms ", now - last);
 }
 
 void setup()
@@ -580,10 +575,10 @@ void setup()
 
   // 初始化调试串口
   Serial.begin(115200);
-  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
+  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
 
   // 初始化 UART1
-  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
+  Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
 
   // 初始化ADC1
   adc1_config_width(ADC_WIDTH_BIT_12);
@@ -623,10 +618,10 @@ void setup()
 
   // 切换读卡器通信
   Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(50));
+  vTaskDelay(pdMS_TO_TICKS(100));
   Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
 
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   LOG_I("初始化完成");
 
@@ -645,19 +640,15 @@ void loop()
   esp_light_sleep_start();
   gpio_hold_dis((gpio_num_t)EN_5V);
   gpio_hold_dis((gpio_num_t)DAC_EN);
-  vTaskDelay(pdMS_TO_TICKS(1));
-  LOG_I("已唤醒");
-
   digitalWrite(EN_5V, HIGH);
+  LOG_I("已唤醒");
   vTaskDelay(pdMS_TO_TICKS(10));
-
-  // 清空缓冲区
-  sendCardSearchCommand();
-  sendCardSearchCommand();
 
   // au:wait
   addTolist(2);
-  vTaskDelay(pdMS_TO_TICKS(10));
+
+  // 读卡
+  sendCardSearchCommand();
 
   // 检查 UART1 是否有数据可读
   if (Serial1.available() > 0)
