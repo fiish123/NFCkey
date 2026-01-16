@@ -163,6 +163,7 @@ void switchaudio(unsigned int in)
     break;
   case 2:
     // reading
+    VOLUME1=0.9;
     arrsize = sizeof(reading_data);
     dataarr = (void *)reading_data;
     pname = "player2";
@@ -170,6 +171,7 @@ void switchaudio(unsigned int in)
     break;
   case 3:
     // accept
+    randomSeed(millis());
     choi = random(1, 4);
 
     switch (choi)
@@ -182,7 +184,7 @@ void switchaudio(unsigned int in)
       break;
     case 2:
       // Ciallo～ (∠・ω< )⌒★
-      VOLUME1 = 0.8;
+      VOLUME1 = 0.7;
 
       arrsize = sizeof(accept_data_2);
       dataarr = (void *)accept_data_2;
@@ -286,7 +288,7 @@ void addTolist(unsigned int in)
   playlistcount++;
   if (!isplListrun)
   {
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(10));
     xTaskCreatePinnedToCore(
         playerList,        // 任务函数
         "playerlist1",     // 任务名称
