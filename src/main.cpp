@@ -5,7 +5,7 @@
 #include "esp_adc_cal.h"
 #include "AudioTools.h"
 #include "AudioTools/AudioCodecs/CodecAACHelix.h"
-#include "MP3DATA.h"
+#include "AudioTools/Disk/AudioSourceLittleFS.h"
 
 // 读卡器通信
 #define UART1_RX_PIN 19
@@ -20,7 +20,7 @@
 #define CLK1_PIN 6
 #define DATA1_PIN 7
 #define DAC_EN 10
-float VOLUME1 = 1;
+volatile float VOLUME1 = 1.0;
 
 // 舵机通信
 #define UART1_TX_servo_PIN 0
@@ -89,188 +89,85 @@ void logMessage(const int level, const char *tag, const char *format, ...)
 }
 
 // 全局音频流
-I2SStream i2s;                           // i2s
-AACDecoderHelix helix;                   // aac decoder
-VolumeStream volume(i2s);                // volume to i2s
-EncodedAudioStream out(&volume, &helix); // output to volume
-StreamCopy copier;                       // copy in to decoder
-// 播放线程状态标记
-volatile bool isplaying = false;
-volatile bool isplListrun = false;
-volatile unsigned int arrsize = 0;
-// 解码主线程
-TaskHandle_t playerHandle = NULL;
-void player(void *parameter)
+I2SStream i2s;         // i2s
+AACDecoderHelix helix; // aac decoder (for AudioPlayer)
+AudioSourceLittleFS soundsource("/sound", "aac");
+AudioPlayer player1(soundsource, i2s, helix);
+// 音频文件路径映射
+const char *getAudioPath(unsigned int in)
 {
-  isplaying = true;
-
-  // 音频FLASH数据流
-  const unsigned char *DATA = (const unsigned char *)parameter;
-  MemoryStream data(DATA, arrsize);
-
-  // i2s配置
-  auto cfg = i2s.defaultConfig();
-  cfg.sample_rate = 44100;
-  cfg.channels = 1;
-  cfg.pin_bck = CLK1_PIN;
-  cfg.pin_data = DATA1_PIN;
-  cfg.pin_ws = LRC1_PIN;
-  i2s.begin(cfg);
-  // 音量控制配置
-  volume.setVolume(VOLUME1);
-  volume.begin();
-
-  // 输出流配置
-  out.begin();
-  copier.begin(out, data);
-
-  auto info = out.decoder().audioInfo();
-  LOGI("The audio rate from the mp3 file is %d", info.sample_rate);
-  LOGI("The channels from the mp3 file is %d", info.channels);
-
-  while (data.available())
-  {
-    // 解码线程
-    copier.copy();
-    vTaskDelay(pdMS_TO_TICKS(5));
-  }
-
-  helix.end();
-  i2s.end();
-  volume.end();
-  copier.end();
-  out.end();
-  data.end();
-  isplaying = false;
-  vTaskDelete(NULL);
-}
-// 切换音源
-void switchaudio(unsigned int in)
-{
-
-  void *dataarr = NULL;
-  String pname = "player";
-  int choi = 0;
-  VOLUME1 = 1;
+  VOLUME1 = 1.0;
   switch (in)
   {
   case 1:
-    // ready
-
-    arrsize = sizeof(ready_data);
-    dataarr = (void *)ready_data;
-    pname = "player1";
-    break;
+    return "/sound/ready.aac";
   case 2:
-    // reading
-    VOLUME1=0.9;
-    arrsize = sizeof(reading_data);
-    dataarr = (void *)reading_data;
-    pname = "player2";
-
-    break;
+    VOLUME1 = 0.9;
+    return "/sound/wating.aac";
   case 3:
-    // accept
+    // 随机选择 accept 音频
     randomSeed(millis());
-    choi = random(1, 4);
-
-    switch (choi)
+    switch (random(1, 4))
     {
-    case 1:
-
-      // 卡
-      arrsize = sizeof(accept_data);
-      dataarr = (void *)accept_data;
-      break;
-    case 2:
-      // Ciallo～ (∠・ω< )⌒★
+    case 1: // Welcome to Rhinelab LLC, Internal Residence.
+      return "/sound/accept_1.aac";
+    case 2: // Ciallo～ (∠・ω< )⌒★
       VOLUME1 = 0.7;
-
-      arrsize = sizeof(accept_data_2);
-      dataarr = (void *)accept_data_2;
-      break;
-    case 3:
-      // Welcome to Rhinelab LLC, Internal Residence.
-      arrsize = sizeof(accept_data_2);
-      dataarr = (void *)accept_data_2;
-      break;
-    default:
-      arrsize = sizeof(_data);
-      dataarr = (void *)_data;
-      break;
+      return "/sound/accept_2.aac";
+    case 3: // 卡
+      return "/sound/accept_3.aac";
+    default: // Welcome to Rhinelab LLC, Internal Residence.
+      return "/sound/accept_1.aac";
     }
-    pname = "player3";
-
-    break;
   case 4:
-    // denied
-
-    arrsize = sizeof(denied_data);
-    dataarr = (void *)denied_data;
-    pname = "player4";
-    break;
+    return "/sound/denied.aac";
   case 5:
-    // readerror
-
-    arrsize = sizeof(readerror_data);
-    dataarr = (void *)readerror_data;
-
-    pname = "player5";
-
-    break;
+    return "/sound/readerror.aac";
   case 6:
-    // lowBAT
-    arrsize = sizeof(lowbat_data);
-    dataarr = (void *)lowbat_data;
-    pname = "player6";
-
-    break;
+    return "/sound/low.aac";
   case 7:
-    // pluslowBAT
-    arrsize = sizeof(lowlowbat_data);
-    dataarr = (void *)lowlowbat_data;
-    pname = "player7";
-
-    break;
+    return "/sound/lowlow.aac";
   default:
+    return "/sound/audiounknow.aac";
+  }
+}
+// 播放音频（新方式，使用 AudioPlayer）
+void playAudio(unsigned int in)
+{
+  const char *audioPath = getAudioPath(in);
 
-    arrsize = sizeof(_data);
-    dataarr = (void *)_data;
-    pname = "player0";
-
-    break;
+  if (!player1.isActive())
+  {
+    player1.begin();
   }
 
-  // 音频解码线程
-  xTaskCreatePinnedToCore(
-      player,        // 任务函数
-      pname.c_str(), // 任务名称
-      4096,          // 堆栈大小（字节）
-      dataarr,       // 参数
-      3,             // 优先级
-      &playerHandle, // 任务句柄
-      0              // 核心编号
-  );
+  player1.setVolume(VOLUME1);
+
+  // 播放音频文件（阻塞直到完成）
+  player1.playPath(audioPath);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  LOG_I("播放音频: %s", audioPath);
 }
-// 音源管理
+// 播放线程状态标记
+volatile bool isplListrun = false;
 TaskHandle_t playerListHandle = NULL;
 unsigned char playlist[20] = {};
 unsigned int playlistcount = 0, playlistindex = 0;
 void playerList(void *parameter)
 {
   isplListrun = true;
-  while (playlistcount - playlistindex > 0 || isplaying)
+
+  while (playlistcount - playlistindex > 0)
   {
-    if (!isplaying)
-    {
-      vTaskDelay(pdMS_TO_TICKS(100));
-      switchaudio(playlist[playlistindex]);
-      playlistindex++;
-      LOG_I("播放列表 %d/%d", playlistindex, playlistcount);
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
+    // 直接播放列表中的音频
+    playAudio(playlist[playlistindex]);
+    playlistindex++;
+    LOG_D("播放列表 %d/%d", playlistindex, playlistcount);
   }
 
+  player1.end();
+  player1.stop();
   digitalWrite(DAC_EN, LOW);
   LOG_I("播放任务完成~");
   playlistcount = 0;
@@ -292,9 +189,9 @@ void addTolist(unsigned int in)
     xTaskCreatePinnedToCore(
         playerList,        // 任务函数
         "playerlist1",     // 任务名称
-        1024 * 2,          // 堆栈大小（字节）
+        1024 * 6,          // 堆栈大小（字节）
         NULL,              // 参数
-        1,                 // 优先级
+        4,                 // 优先级
         &playerListHandle, // 任务句柄
         0                  // 核心编号
     );
@@ -612,9 +509,19 @@ void setup()
   // 舵机复位
   sendServoPosition(1180);
 
+  auto cfg = i2s.defaultConfig();
+  cfg.sample_rate = 44100;
+  cfg.channels = 1;
+  cfg.pin_bck = CLK1_PIN;
+  cfg.pin_data = DATA1_PIN;
+  cfg.pin_ws = LRC1_PIN;
+  i2s.begin(cfg);
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+
   // au:ready
   addTolist(1);
-  delay(2000);
+  vTaskDelay(pdMS_TO_TICKS(2000));
   digitalWrite(EN_5V, LOW);
   digitalWrite(DAC_EN, LOW);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <LittleFS.h>
+#include <FS.h>                      // 明确包含 FS 命名空间
 #include "AudioLogger.h"
 #include "AudioTools/Disk/AudioSource.h"
 #include "AudioTools/Disk/SDDirect.h"
@@ -8,9 +9,9 @@
 namespace audio_tools {
 
 /**
- * @brief ESP32 AudioSource for AudioPlayer using an the LittleFS file system
+ * @brief ESP32-C3 AudioSource for AudioPlayer using the LittleFS file system
  * @ingroup player
- * @author Phil Schatzmann
+ * @author Adapted for ESP32-C3
  * @copyright GPLv3
  */
 class AudioSourceLittleFS : public AudioSource {
@@ -28,7 +29,7 @@ public:
       while (!LittleFS.begin()) {
         LOGE("LittleFS.begin failed");
         delay(500);
-        if (--retry >= 0) {
+        if (--retry <= 0) {           // 修正循环条件，原代码逻辑有误
           return false;
         }
       }
@@ -53,22 +54,21 @@ public:
     LOGI("selectStream: %d", index);
     idx_pos = index;
     file_name = idx[index];
-    if (file_name==nullptr) return nullptr;
+    if (file_name == nullptr) return nullptr;
     LOGI("Using file %s", file_name);
-    file = LittleFS.open(file_name,"r");
+    file = LittleFS.open(file_name, "r");
     return file ? &file : nullptr;
   }
 
   virtual Stream *selectStream(const char *path) override {
     file.close();
-    file = LittleFS.open(path,"r");
+    file = LittleFS.open(path, "r");
     file_name = file.name();
     LOGI("-> selectStream: %s", path);
     return file ? &file : nullptr;
   }
 
-  /// Defines the regex filter criteria for selecting files. E.g. ".*Bob
-  /// Dylan.*"
+  /// Defines the regex filter criteria for selecting files. E.g. ".*Bob Dylan.*"
   void setFileFilter(const char *filter) { file_name_pattern = filter; }
 
   /// Provides the current index position
@@ -84,14 +84,11 @@ public:
   virtual void setPath(const char *p) { start_path = p; }
 
   /// Provides the number of files (The max index is size()-1): WARNING this is very slow if you have a lot of files in many subdirectories
-  long size() { return idx.size();}
+  long size() { return idx.size(); }
 
 protected:
-#ifdef RP2040_HOWER
-  SDDirect<FS,File> idx{LittleFS};
-#else
-  SDDirect<fs::LittleFSFS,fs::File> idx{LittleFS};
-#endif
+  // 使用 ESP32-C3 的标准 LittleFS 类型
+  SDDirect<fs::LittleFSFS, fs::File> idx{LittleFS};
   File file;
   size_t idx_pos = 0;
   const char *file_name;
