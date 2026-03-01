@@ -131,50 +131,47 @@ const char *getAudioPath(unsigned int in)
     return "/sound/audiounknow.aac";
   }
 }
-// 播放音频（新方式，使用 AudioPlayer）
+// 播放音频
 void playAudio(unsigned int in)
 {
   const char *audioPath = getAudioPath(in);
-
-  if (!player1.isActive())
-  {
-    player1.begin();
-  }
 
   player1.setVolume(VOLUME1);
 
   // 播放音频文件（阻塞直到完成）
   player1.playPath(audioPath);
-  vTaskDelay(pdMS_TO_TICKS(1000));
 
   LOG_I("播放音频: %s", audioPath);
 }
 // 播放线程状态标记
-volatile bool isplListrun = false;
 TaskHandle_t playerListHandle = NULL;
 unsigned char playlist[20] = {};
-unsigned int playlistcount = 0, playlistindex = 0;
+volatile unsigned int playlistcount = 0, playlistindex = 0;
+volatile bool isplaying = false;
 void playerList(void *parameter)
 {
-  isplListrun = true;
-
-  while (playlistcount - playlistindex > 0)
+  while (1)
   {
-    // 直接播放列表中的音频
-    playAudio(playlist[playlistindex]);
-    playlistindex++;
-    LOG_D("播放列表 %d/%d", playlistindex, playlistcount);
+
+    while (playlistcount - playlistindex > 0)
+    {
+      isplaying = true;
+
+      playAudio(playlist[playlistindex]);
+      playlistindex++;
+      LOG_D("播放列表 %d/%d", playlistindex, playlistcount);
+    }
+
+    if (isplaying)
+    {
+      digitalWrite(DAC_EN, LOW);
+      LOG_I("播放任务完成~");
+      playlistcount = 0;
+      playlistindex = 0;
+      isplaying = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
-
-  player1.end();
-  player1.stop();
-  digitalWrite(DAC_EN, LOW);
-  LOG_I("播放任务完成~");
-  playlistcount = 0;
-  playlistindex = 0;
-  isplListrun = false;
-
-  vTaskDelete(NULL);
 }
 // 添加播放任务到列表
 void addTolist(unsigned int in)
@@ -183,19 +180,6 @@ void addTolist(unsigned int in)
 
   playlist[playlistcount] = in;
   playlistcount++;
-  if (!isplListrun)
-  {
-    vTaskDelay(pdMS_TO_TICKS(10));
-    xTaskCreatePinnedToCore(
-        playerList,        // 任务函数
-        "playerlist1",     // 任务名称
-        1024 * 6,          // 堆栈大小（字节）
-        NULL,              // 参数
-        4,                 // 优先级
-        &playerListHandle, // 任务句柄
-        0                  // 核心编号
-    );
-  }
 }
 
 // 发送舵机位置控制指令
@@ -444,22 +428,22 @@ NFCcard ReadCard()
 // 读卡指令
 void sendCardSearchCommand()
 {
+  // 寻卡指令
+  uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
+
+  vTaskDelay(pdMS_TO_TICKS(50));
   while (Serial1.available() > 0)
   {
     Serial1.read();
   }
 
-  // 寻卡指令
-  uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
-
   // 通过Serial1发送指令
   Serial1.write(cardSearchCmd, sizeof(cardSearchCmd));
-  Serial1.flush();
 
   unsigned long last, now;
   last = millis();
   now = last;
-  while (Serial1.available() < 14 && now - last < 100)
+  while (Serial1.available() < 14 && now - last < 1000)
   {
     vTaskDelay(pdMS_TO_TICKS(1));
     now = millis();
@@ -474,7 +458,7 @@ void setup()
 
   // 初始化调试串口
   Serial.begin(115200);
-  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
+   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
 
   // 初始化 UART1
   Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
@@ -509,6 +493,7 @@ void setup()
   // 舵机复位
   sendServoPosition(1180);
 
+  // 初始化播放器
   auto cfg = i2s.defaultConfig();
   cfg.sample_rate = 44100;
   cfg.channels = 1;
@@ -516,6 +501,16 @@ void setup()
   cfg.pin_data = DATA1_PIN;
   cfg.pin_ws = LRC1_PIN;
   i2s.begin(cfg);
+  player1.begin();
+  xTaskCreatePinnedToCore(
+      playerList,        // 任务函数
+      "playerlist1",     // 任务名称
+      1024 * 5,          // 堆栈大小（字节）
+      NULL,              // 参数
+      4,                 // 优先级
+      &playerListHandle, // 任务句柄
+      0                  // 核心编号
+  );
 
   vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -527,10 +522,10 @@ void setup()
 
   // 切换读卡器通信
   Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(100));
+  vTaskDelay(pdMS_TO_TICKS(200));
   Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
 
-  vTaskDelay(pdMS_TO_TICKS(2000));
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
   LOG_I("初始化完成");
 
@@ -579,9 +574,9 @@ void loop()
         // 切换舵机通信
 
         Serial1.end();
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(10));
         Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
-        vTaskDelay(pdMS_TO_TICKS(300));
+        vTaskDelay(pdMS_TO_TICKS(100));
 
         // leds[0] = CRGB::Green;
         // FastLED.show();
@@ -655,9 +650,9 @@ void loop()
   }
 
   // 等待音频完成播放
-  while (isplListrun)
+  while (isplaying)
   {
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
   digitalWrite(EN_5V, LOW);
