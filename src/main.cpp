@@ -1,11 +1,13 @@
 #include <Arduino.h>
 #include <vector>
+#include <Preferences.h>
 // #include <FastLED.h>
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 #include "AudioTools.h"
 #include "AudioTools/AudioCodecs/CodecAACHelix.h"
 #include "AudioTools/Disk/AudioSourceLittleFS.h"
+#include "web_server.h"
 
 // 读卡器通信
 #define UART1_RX_PIN 19
@@ -28,6 +30,14 @@ volatile float VOLUME1 = 1.0;
 
 // 5V电源EN (DAC、舵机电源)
 #define EN_5V 2
+
+// 舵机位置配置（使用Preferences存储）
+Preferences servoPreferences;
+uint16_t unlockPosition = 800;   // 默认解锁位置
+uint16_t lockPosition = 1180;    // 默认锁定位置
+const char* PREF_NAMESPACE = "servo";
+const char* PREF_UNLOCK_POS = "unlock_pos";
+const char* PREF_LOCK_POS = "lock_pos";
 
 // LED参数
 // #define NUM_LEDS 1   // LED数量
@@ -182,6 +192,42 @@ void addTolist(unsigned int in)
   playlistcount++;
 }
 
+// 加载舵机配置
+void loadServoConfig()
+{
+  servoPreferences.begin(PREF_NAMESPACE, false);
+  unlockPosition = servoPreferences.getUShort(PREF_UNLOCK_POS, 800);
+  lockPosition = servoPreferences.getUShort(PREF_LOCK_POS, 1180);
+  servoPreferences.end();
+  
+  Serial.printf("舵机配置加载 - 解锁: %d, 锁定: %d\n", unlockPosition, lockPosition);
+}
+
+// 保存舵机配置
+void saveServoConfig(uint16_t unlock, uint16_t lock)
+{
+  // 参数范围校验
+  if (unlock > 4095) unlock = 4095;
+  if (lock > 4095) lock = 4095;
+  
+  servoPreferences.begin(PREF_NAMESPACE, false);
+  servoPreferences.putUShort(PREF_UNLOCK_POS, unlock);
+  servoPreferences.putUShort(PREF_LOCK_POS, lock);
+  servoPreferences.end();
+  
+  unlockPosition = unlock;
+  lockPosition = lock;
+  
+  Serial.printf("舵机配置已保存 - 解锁: %d, 锁定: %d\n", unlockPosition, lockPosition);
+}
+
+// 获取舵机配置
+void getServoConfig(uint16_t &unlock, uint16_t &lock)
+{
+  unlock = unlockPosition;
+  lock = lockPosition;
+}
+
 // 发送舵机位置控制指令
 void sendServoPosition(unsigned int in)
 {
@@ -194,19 +240,19 @@ void sendServoPosition(unsigned int in)
   const uint8_t POS_REGISTER = 0x1E;      // 位置寄存器地址
   const uint8_t DATA_LENGTH = 0x05;       // 长度字段：3个参数+2=5
 
-  // // 舵机位置范围限制
-  // const uint16_t MIN_POSITION = 0;      // 最低点
-  // const uint16_t MAX_POSITION = 0x0500; // 最高点（1280）
+  // 舵机位置范围限制
+  const uint16_t MIN_POSITION = 0;      // 最低点
+  const uint16_t MAX_POSITION = 0x0500; // 最高点（1280）
 
-  // // 限制位置值在有效范围内
-  // if (position < MIN_POSITION)
-  // {
-  //   position = MIN_POSITION;
-  // }
-  // else if (position > MAX_POSITION)
-  // {
-  //   position = MAX_POSITION;
-  // }
+  // 限制位置值在有效范围内
+  if (position < MIN_POSITION)
+  {
+    position = MIN_POSITION;
+  }
+  else if (position > MAX_POSITION)
+  {
+    position = MAX_POSITION;
+  }
 
   // 拆分位置值为低字节和高字节（小端序）
   uint8_t pos_low = static_cast<uint8_t>(position & 0xFF);
@@ -238,13 +284,13 @@ void sendServoPosition(unsigned int in)
 
 // 舵机动作
 bool isservobusy = false;
+
 void Switchlock()
 {
-
   isservobusy = true;
 
   // UNLOCKING
-  sendServoPosition(800);
+  sendServoPosition(unlockPosition);
 
   // au:accept
   addTolist(3);
@@ -253,12 +299,32 @@ void Switchlock()
   vTaskDelay(pdMS_TO_TICKS(2000));
 
   // LOCKING
-  sendServoPosition(1180);
+  sendServoPosition(lockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   LOG_D("舵机完成动作");
 
   isservobusy = false;
+}
+
+// 执行解锁动作（供Web调用）
+void executeUnlock()
+{
+  isservobusy = true;
+  sendServoPosition(unlockPosition);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  isservobusy = false;
+  LOG_I("Web控制: 舵机解锁");
+}
+
+// 执行锁定动作（供Web调用）
+void executeLock()
+{
+  isservobusy = true;
+  sendServoPosition(lockPosition);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  isservobusy = false;
+  LOG_I("Web控制: 舵机锁定");
 }
 
 // NFC标签结构体
@@ -450,6 +516,13 @@ void sendCardSearchCommand()
   }
   LOG_V("读卡耗时 %dms ", now - last);
 }
+// 连续读卡计数器 - 用于激活Web服务器
+volatile int consecutiveCardCount = 0;
+const int CARD_COUNT_TO_ACTIVATE_WEBSERVER = 3;
+unsigned long lastCardReadTime = 0;
+const unsigned long CARD_READ_TIMEOUT_MS = 10000; // 10秒内连续读卡才计数
+
+
 
 void setup()
 {
@@ -469,6 +542,10 @@ void setup()
   // 字符化ADC用于电压转换
   esp_adc_cal_value_t val_type = esp_adc_cal_characterize(
       ADC_UNIT_1, ADC_ATTEN, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+
+
+
+
 
   // 初始化LED
   // FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
@@ -490,8 +567,11 @@ void setup()
 
   delay(1000);
 
+  // 加载舵机配置
+  loadServoConfig();
+
   // 舵机复位
-  sendServoPosition(1180);
+  sendServoPosition(lockPosition);
 
   // 初始化播放器
   auto cfg = i2s.defaultConfig();
@@ -535,18 +615,27 @@ void setup()
 
 void loop()
 {
-
-  // 进入浅睡眠
-  LOG_I("进入浅睡眠");
-  gpio_hold_en((gpio_num_t)EN_5V);
-  gpio_hold_en((gpio_num_t)DAC_EN);
-  vTaskDelay(pdMS_TO_TICKS(100));
-  esp_light_sleep_start();
-  gpio_hold_dis((gpio_num_t)EN_5V);
-  gpio_hold_dis((gpio_num_t)DAC_EN);
-  digitalWrite(EN_5V, HIGH);
-  LOG_I("已唤醒");
-  vTaskDelay(pdMS_TO_TICKS(10));
+  // 如果Web服务器正在运行，不进入浅睡眠
+  if (!isWebServerRunning())
+  {
+    // 进入浅睡眠
+    LOG_I("进入浅睡眠");
+    gpio_hold_en((gpio_num_t)EN_5V);
+    gpio_hold_en((gpio_num_t)DAC_EN);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_light_sleep_start();
+    gpio_hold_dis((gpio_num_t)EN_5V);
+    gpio_hold_dis((gpio_num_t)DAC_EN);
+    digitalWrite(EN_5V, HIGH);
+    LOG_I("已唤醒");
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  else
+  {
+    // Web服务器运行时，保持唤醒状态
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    return;
+  }
 
   // au:wait
   addTolist(2);
@@ -571,8 +660,30 @@ void loop()
         // 匹配
         LOG_I("卡授权");
 
-        // 切换舵机通信
+        // 检查是否超时重置计数器
+        if (millis() - lastCardReadTime > CARD_READ_TIMEOUT_MS)
+        {
+          consecutiveCardCount = 0;
+        }
 
+        // 增加计数器
+        consecutiveCardCount++;
+        lastCardReadTime = millis();
+        LOG_I("连续读卡次数: %d/%d", consecutiveCardCount, CARD_COUNT_TO_ACTIVATE_WEBSERVER);
+
+        // 检查是否达到激活Web服务器的次数
+        if (consecutiveCardCount >= CARD_COUNT_TO_ACTIVATE_WEBSERVER)
+        {
+          if (!isWebServerRunning())
+          {
+            LOG_I("=== 激活Web服务器模式 ===");
+            LittleFS.begin();
+            initWebServer();
+            consecutiveCardCount = 0; // 重置计数器
+          }
+        }
+
+        // 切换舵机通信
         Serial1.end();
         vTaskDelay(pdMS_TO_TICKS(10));
         Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
@@ -596,6 +707,9 @@ void loop()
 
         // au:denied
         addTolist(4);
+        
+        // 不匹配的卡重置计数器
+        consecutiveCardCount = 0;
       }
     }
     else
