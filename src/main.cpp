@@ -8,6 +8,7 @@
 #include "AudioTools/AudioCodecs/CodecAACHelix.h"
 #include "AudioTools/Disk/AudioSourceLittleFS.h"
 #include "web_server.h"
+#include "logger.h"
 
 // 读卡器通信
 #define UART1_RX_PIN 19
@@ -33,11 +34,11 @@ volatile float VOLUME1 = 1.0;
 
 // 舵机位置配置（使用Preferences存储）
 Preferences servoPreferences;
-uint16_t unlockPosition = 800;   // 默认解锁位置
-uint16_t lockPosition = 1180;    // 默认锁定位置
-const char* PREF_NAMESPACE = "servo";
-const char* PREF_UNLOCK_POS = "unlock_pos";
-const char* PREF_LOCK_POS = "lock_pos";
+uint16_t unlockPosition = 800; // 默认解锁位置
+uint16_t lockPosition = 1180;  // 默认锁定位置
+const char *PREF_NAMESPACE = "servo";
+const char *PREF_UNLOCK_POS = "unlock_pos";
+const char *PREF_LOCK_POS = "lock_pos";
 
 // LED参数
 // #define NUM_LEDS 1   // LED数量
@@ -199,26 +200,28 @@ void loadServoConfig()
   unlockPosition = servoPreferences.getUShort(PREF_UNLOCK_POS, 800);
   lockPosition = servoPreferences.getUShort(PREF_LOCK_POS, 1180);
   servoPreferences.end();
-  
-  Serial.printf("舵机配置加载 - 解锁: %d, 锁定: %d\n", unlockPosition, lockPosition);
+
+  LOG_I("舵机配置加载 - 解锁: %d, 锁定: %d", unlockPosition, lockPosition);
 }
 
 // 保存舵机配置
 void saveServoConfig(uint16_t unlock, uint16_t lock)
 {
   // 参数范围校验
-  if (unlock > 4095) unlock = 4095;
-  if (lock > 4095) lock = 4095;
-  
+  if (unlock > 4095)
+    unlock = 4095;
+  if (lock > 4095)
+    lock = 4095;
+
   servoPreferences.begin(PREF_NAMESPACE, false);
   servoPreferences.putUShort(PREF_UNLOCK_POS, unlock);
   servoPreferences.putUShort(PREF_LOCK_POS, lock);
   servoPreferences.end();
-  
+
   unlockPosition = unlock;
   lockPosition = lock;
-  
-  Serial.printf("舵机配置已保存 - 解锁: %d, 锁定: %d\n", unlockPosition, lockPosition);
+
+  LOG_I("舵机配置已保存 - 解锁: %d, 锁定: %d", unlockPosition, lockPosition);
 }
 
 // 获取舵机配置
@@ -311,8 +314,22 @@ void Switchlock()
 void executeUnlock()
 {
   isservobusy = true;
+
+  digitalWrite(EN_5V, HIGH);
+  Serial1.end();
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
+  vTaskDelay(pdMS_TO_TICKS(200));
+
   sendServoPosition(unlockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
+
+  Serial1.end();
+  vTaskDelay(pdMS_TO_TICKS(50));
+  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
+  digitalWrite(EN_5V, LOW);
+
   isservobusy = false;
   LOG_I("Web控制: 舵机解锁");
 }
@@ -321,8 +338,22 @@ void executeUnlock()
 void executeLock()
 {
   isservobusy = true;
+
+  digitalWrite(EN_5V, HIGH);
+
+  Serial1.end();
+  vTaskDelay(pdMS_TO_TICKS(50));
+  Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
+  vTaskDelay(pdMS_TO_TICKS(200));
+
   sendServoPosition(lockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
+
+  Serial1.end();
+  vTaskDelay(pdMS_TO_TICKS(50));
+  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
+  digitalWrite(EN_5V, LOW);
+
   isservobusy = false;
   LOG_I("Web控制: 舵机锁定");
 }
@@ -522,8 +553,6 @@ const int CARD_COUNT_TO_ACTIVATE_WEBSERVER = 3;
 unsigned long lastCardReadTime = 0;
 const unsigned long CARD_READ_TIMEOUT_MS = 10000; // 10秒内连续读卡才计数
 
-
-
 void setup()
 {
   // 低功耗
@@ -531,7 +560,7 @@ void setup()
 
   // 初始化调试串口
   Serial.begin(115200);
-   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
+  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
 
   // 初始化 UART1
   Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
@@ -542,10 +571,6 @@ void setup()
   // 字符化ADC用于电压转换
   esp_adc_cal_value_t val_type = esp_adc_cal_characterize(
       ADC_UNIT_1, ADC_ATTEN, ADC_WIDTH_BIT_12, 1100, &adc_chars);
-
-
-
-
 
   // 初始化LED
   // FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
@@ -707,7 +732,7 @@ void loop()
 
         // au:denied
         addTolist(4);
-        
+
         // 不匹配的卡重置计数器
         consecutiveCardCount = 0;
       }
