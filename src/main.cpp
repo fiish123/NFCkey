@@ -138,6 +138,12 @@ const char *getAudioPath(unsigned int in)
     return "/sound/low.aac";
   case 7:
     return "/sound/lowlow.aac";
+  case 8:
+    return "/sound/connectingwifi.aac";
+  case 9:
+    return "/sound/successwifi.aac";
+  case 10:
+    return "/sound/failwifi.aac";
   default:
     return "/sound/audiounknow.aac";
   }
@@ -640,6 +646,14 @@ void setup()
 
 void loop()
 {
+  if (!isWebServerRunning())
+  {
+    LOG_I("=== 激活Web服务器模式 ===");
+    LittleFS.begin();
+    initWebServer();
+    consecutiveCardCount = 0; // 重置计数器
+  }
+
   // 如果Web服务器正在运行，不进入浅睡眠
   if (!isWebServerRunning())
   {
@@ -684,29 +698,6 @@ void loop()
       {
         // 匹配
         LOG_I("卡授权");
-
-        // 检查是否超时重置计数器
-        if (millis() - lastCardReadTime > CARD_READ_TIMEOUT_MS)
-        {
-          consecutiveCardCount = 0;
-        }
-
-        // 增加计数器
-        consecutiveCardCount++;
-        lastCardReadTime = millis();
-        LOG_I("连续读卡次数: %d/%d", consecutiveCardCount, CARD_COUNT_TO_ACTIVATE_WEBSERVER);
-
-        // 检查是否达到激活Web服务器的次数
-        if (consecutiveCardCount >= CARD_COUNT_TO_ACTIVATE_WEBSERVER)
-        {
-          if (!isWebServerRunning())
-          {
-            LOG_I("=== 激活Web服务器模式 ===");
-            LittleFS.begin();
-            initWebServer();
-            consecutiveCardCount = 0; // 重置计数器
-          }
-        }
 
         // 切换舵机通信
         Serial1.end();
@@ -791,6 +782,39 @@ void loop()
   // 等待音频完成播放
   while (isplaying)
   {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
+  while (digitalRead(IRQ) == HIGH)
+  {
+    NFCcard currentcard;
+    currentcard = ReadCard();
+
+    // 卡数据有效检查
+    if (isCardAuthorized(currentcard, authorizedCards, Cardscount))
+    {
+      // 检查是否超时重置计数器
+      if (millis() - lastCardReadTime > CARD_READ_TIMEOUT_MS)
+      {
+        consecutiveCardCount = 0;
+      }
+
+      // 增加计数器
+      consecutiveCardCount++;
+      lastCardReadTime = millis();
+      LOG_I("连续读卡次数: %d/%d", consecutiveCardCount, CARD_COUNT_TO_ACTIVATE_WEBSERVER);
+
+      // 检查是否达到激活Web服务器的次数
+      if (consecutiveCardCount >= CARD_COUNT_TO_ACTIVATE_WEBSERVER)
+      {
+        if (!isWebServerRunning())
+        {
+          LittleFS.begin();
+          initWebServer();
+          consecutiveCardCount = 0; // 重置计数器
+        }
+      }
+    }
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 

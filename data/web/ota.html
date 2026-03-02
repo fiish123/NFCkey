@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTA升级 - Update</title>
+    <link rel="stylesheet" href="/web/css/style.css">
+    <style>
+        /* 页面特定样式 - 统一宽度为500px */
+        .upload-box {
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .system-info {
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .section {
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container narrow" data-animate>
+        <h1>OTA固件升级</h1>
+        
+        <!-- 系统信息 -->
+        <div class="system-info">
+            <div class="info-row">
+                <span><strong>型号：</strong></span>
+                <span id="chipModel">-</span>
+            </div>
+            <div class="info-row">
+                <span><strong>芯片ID：</strong></span>
+                <span id="chipId">-</span>
+            </div>
+            <div class="info-row">
+                <span><strong>当前版本：</strong></span>
+                <span id="currentVersion">-</span>
+            </div>
+        </div>
+        
+        <!-- 上传区域 -->
+        <div class="upload-box" id="uploadBox" onclick="document.getElementById('file').click()">
+            <div class="upload-box-content" id="uploadBoxContent">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <h3>点击或拖拽上传固件</h3>
+                <p>支持 .bin 格式的固件文件</p>
+                <div class="file-info" id="fileInfo">
+                    <strong id="fileName"></strong>
+                    <span class="file-size" id="fileSize"></span>
+                </div>
+            </div>
+            <input type="file" id="file" accept=".bin" style="display: none;" aria-label="选择固件文件">
+        </div>
+        
+        <!-- 升级说明 -->
+        <div class="section">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                升级说明
+            </h2>
+            <div style="text-align: left; line-height: 1.8; color: var(--color-text-muted); font-size: 14px;">
+                <p>1. 确保ESP32-C3有稳定的电源供应</p>
+                <p>2. 上传过程中请勿断开设备连接</p>
+                <p>3. 升级完成后设备将自动重启</p>
+            </div>
+        </div>
+        
+        <!-- 进度条 -->
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar">0%</div>
+        </div>
+        
+        <a href="/" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            返回主页
+        </a>
+    </div>
+    
+    <script src="/web/js/common.js"></script>
+    <script>
+        let selectedFile = null;
+        
+        window.onload = function() {
+            loadSystemInfo();
+            initFileUpload();
+        };
+        
+        function loadSystemInfo() {
+            fetch('/api/system/info')
+                .then(response => {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    document.getElementById('chipModel').textContent = data.chipModel || '未知';
+                    document.getElementById('chipId').textContent = data.chipId || '未知';
+                    document.getElementById('currentVersion').textContent = data.version || '未知';
+                })
+                .catch(err => {
+                    console.error('获取系统信息失败:', err);
+                    document.getElementById('chipModel').textContent = '获取失败';
+                    document.getElementById('chipId').textContent = '-';
+                    document.getElementById('currentVersion').textContent = '-';
+                });
+        }
+        
+        function initFileUpload() {
+            const uploadBox = document.getElementById('uploadBox');
+            const fileInput = document.getElementById('file');
+            
+            initDragAndDrop(uploadBox, fileInput, function(file) {
+                selectedFile = file;
+                displayFileInfo(file);
+                validateAndUpload(file);
+            });
+        }
+        
+        function displayFileInfo(file) {
+            const uploadBoxContent = document.getElementById('uploadBoxContent');
+            const fileInfo = document.getElementById('fileInfo');
+            const fileName = document.getElementById('fileName');
+            const fileSize = document.getElementById('fileSize');
+            
+            // 隐藏上传内容，显示文件信息
+            if (uploadBoxContent) uploadBoxContent.style.display = 'none';
+            if (fileInfo) {
+                fileInfo.style.display = 'block';
+                if (fileName) fileName.textContent = file.name;
+                if (fileSize) fileSize.textContent = formatFileSize(file.size);
+            }
+        }
+        
+        function resetUploadArea() {
+            const uploadBoxContent = document.getElementById('uploadBoxContent');
+            const fileInfo = document.getElementById('fileInfo');
+            const fileInput = document.getElementById('file');
+            
+            // 恢复上传区域初始状态
+            if (uploadBoxContent) uploadBoxContent.style.display = '';
+            if (fileInfo) fileInfo.style.display = 'none';
+            if (fileInput) fileInput.value = '';
+            selectedFile = null;
+        }
+        
+        function validateAndUpload(file) {
+            // 验证文件扩展名
+            if (!file.name.endsWith('.bin')) {
+                showToast('请选择 .bin 格式的固件文件', 'error');
+                resetUploadArea();
+                return;
+            }
+            
+            // 验证文件大小 (ESP32-C3 OTA分区通常限制为2MB)
+            const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+            if (file.size > MAX_FILE_SIZE) {
+                showToast('文件过大！最大支持2MB', 'error');
+                resetUploadArea();
+                return;
+            }
+            
+            // 开始上传
+            uploadFile(file);
+        }
+        
+        function uploadFile(file) {
+            const fileToUpload = file || selectedFile || document.getElementById('file').files[0];
+            if (!fileToUpload) {
+                showToast('请选择文件', 'warning');
+                return;
+            }
+            
+            // 显示进度条
+            document.getElementById('progressContainer').style.display = 'block';
+            updateProgress(0);
+            showToast('正在上传固件...', 'info');
+            
+            const formData = new FormData();
+            formData.append('file', fileToUpload);
+            
+            const xhr = new XMLHttpRequest();
+            
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    updateProgress(percent);
+                }
+            };
+            
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    showToast('固件上传成功！设备即将重启...', 'success');
+                    document.getElementById('uploadBox').style.display = 'none';
+                } else {
+                    // 尝试解析后端返回的错误信息
+                    let errorMsg = 'HTTP ' + xhr.status;
+                    try {
+                        const response = xhr.responseText;
+                        if (response) {
+                            // 尝试解析JSON格式
+                            if (response.startsWith('{') || response.startsWith('[')) {
+                                const jsonData = JSON.parse(response);
+                                errorMsg = jsonData.error || jsonData.message || jsonData.reason || errorMsg;
+                            } else {
+                                // 直接使用文本响应
+                                errorMsg = response;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('解析错误信息失败:', e);
+                    }
+                    showToast('上传失败: ' + errorMsg, 'error');
+                    resetUploadArea();
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            };
+            
+            xhr.onerror = function() {
+                showToast('上传失败: 网络错误', 'error');
+                resetUploadArea();
+                document.getElementById('progressContainer').style.display = 'none';
+            };
+            
+            xhr.open('POST', '/update');
+            xhr.send(formData);
+        }
+        
+        function updateProgress(percent) {
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percent + '%';
+            progressBar.textContent = percent + '%';
+        }
+    </script>
+</body>
+</html>
