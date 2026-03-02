@@ -43,10 +43,17 @@ struct ApiResponse {
     bool success;
     int code;
     String message;
-    JsonDocument* data;
-    
+    JsonDocument data;
+    bool hasData;
+
+    ApiResponse() : success(false), code(200), message(""), hasData(false) {}
+
     String toJson() const;
 };
+
+// 初始化文件系统
+bool initFileSystem();
+
 
 // 初始化Web服务器
 void initWebServer();
@@ -69,7 +76,6 @@ void handleDownloadFile(AsyncWebServerRequest *request);
 void handleUploadFileComplete(AsyncWebServerRequest *request);
 void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void handleGetServoConfig(AsyncWebServerRequest *request);
-void handleUpdateServoConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 void handleServoUnlock(AsyncWebServerRequest *request);
 void handleServoLock(AsyncWebServerRequest *request);
 void handleRestartSystem(AsyncWebServerRequest *request);

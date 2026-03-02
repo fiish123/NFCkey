@@ -76,9 +76,9 @@ String ApiResponse::toJson() const
     doc["success"] = success;
     doc["code"] = code;
     doc["message"] = message;
-    if (data != nullptr)
+    if (hasData)
     {
-        doc["data"] = *data;
+        doc["data"] = data;
     }
     else
     {
@@ -98,16 +98,14 @@ void sendApiResponse(AsyncWebServerRequest *request, const ApiResponse &response
     request->send(response.code, "application/json", json);
 }
 
-/**
- * 发送成功响应（便捷方法）
- */
-static void sendSuccessResponse(AsyncWebServerRequest *request, JsonDocument *data = nullptr)
+static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data = JsonDocument())
 {
     ApiResponse response;
     response.success = true;
     response.code = 200;
     response.message = "Success";
     response.data = data;
+    response.hasData = !data.isNull();
     sendApiResponse(request, response);
 }
 
@@ -120,7 +118,7 @@ static void sendErrorResponse(AsyncWebServerRequest *request, int code, const St
     response.success = false;
     response.code = code;
     response.message = message;
-    response.data = nullptr;
+    response.hasData = false;
     sendApiResponse(request, response);
 }
 
@@ -131,12 +129,11 @@ static void sendErrorResponse(AsyncWebServerRequest *request, int code, const St
  */
 void handleGetWifiInfo(AsyncWebServerRequest *request)
 {
-    JsonDocument *doc = new JsonDocument();
-    (*doc)["ssid"] = WiFi.SSID();
-    (*doc)["ip"] = WiFi.localIP().toString();
-    (*doc)["rssi"] = WiFi.RSSI();
+    JsonDocument doc;
+    doc["ssid"] = WiFi.SSID();
+    doc["ip"] = WiFi.localIP().toString();
+    doc["rssi"] = WiFi.RSSI();
     sendSuccessResponse(request, doc);
-    delete doc;
 }
 
 /**
@@ -146,12 +143,11 @@ void handleGetBatteryInfo(AsyncWebServerRequest *request)
 {
     float voltage = read_battery_voltage();
 
-    JsonDocument *doc = new JsonDocument();
-    (*doc)["voltage"] = round(voltage * 100) / 100; // 保留2位小数
-    (*doc)["status"] = voltage > 3.4 ? "normal" : (voltage > 3.2 ? "low" : "critical");
+    JsonDocument doc;
+    doc["voltage"] = round(voltage * 100) / 100; // 保留2位小数
+    doc["status"] = voltage > 3.4 ? "normal" : (voltage > 3.2 ? "low" : "critical");
 
     sendSuccessResponse(request, doc);
-    delete doc;
 }
 
 /**
@@ -159,18 +155,17 @@ void handleGetBatteryInfo(AsyncWebServerRequest *request)
  */
 void handleGetSystemInfo(AsyncWebServerRequest *request)
 {
-    JsonDocument *doc = new JsonDocument();
-    (*doc)["chipModel"] = ESP.getChipModel();
+    JsonDocument doc;
+    doc["chipModel"] = ESP.getChipModel();
 
     uint64_t chipId = ESP.getEfuseMac();
     char chipIdStr[17];
     snprintf(chipIdStr, sizeof(chipIdStr), "%016llX", chipId);
-    (*doc)["chipId"] = chipIdStr;
+    doc["chipId"] = chipIdStr;
 
-    (*doc)["version"] = serverConfig.firmwareVersion;
+    doc["version"] = serverConfig.firmwareVersion;
 
     sendSuccessResponse(request, doc);
-    delete doc;
 }
 
 /**
@@ -187,14 +182,13 @@ void handleGetFileSystemInfo(AsyncWebServerRequest *request)
     uint32_t freeKB = freeBytes / 1024;
     uint32_t freePercent = totalBytes > 0 ? (freeBytes * 100) / totalBytes : 0;
 
-    JsonDocument *doc = new JsonDocument();
-    (*doc)["total"] = totalKB;
-    (*doc)["used"] = usedKB;
-    (*doc)["free"] = freeKB;
-    (*doc)["freePercent"] = freePercent;
+    JsonDocument doc;
+    doc["total"] = totalKB;
+    doc["used"] = usedKB;
+    doc["free"] = freeKB;
+    doc["freePercent"] = freePercent;
 
     sendSuccessResponse(request, doc);
-    delete doc;
 }
 
 /**
@@ -222,8 +216,8 @@ void handleListFiles(AsyncWebServerRequest *request)
         return;
     }
 
-    JsonDocument *doc = new JsonDocument();
-    JsonArray array = doc->to<JsonArray>();
+    JsonDocument doc;
+    JsonArray array = doc.to<JsonArray>();
 
     File entry = dir.openNextFile();
     while (entry)
@@ -241,7 +235,6 @@ void handleListFiles(AsyncWebServerRequest *request)
     dir.close();
 
     sendSuccessResponse(request, doc);
-    delete doc;
 }
 
 /**
@@ -266,7 +259,7 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
 
     if (LittleFS.mkdir(path))
     {
-        sendSuccessResponse(request, nullptr);
+        sendSuccessResponse(request);
     }
     else
     {
@@ -322,7 +315,7 @@ void handleDeleteResource(AsyncWebServerRequest *request)
 
     if (success)
     {
-        sendSuccessResponse(request, nullptr);
+        sendSuccessResponse(request);
     }
     else
     {
@@ -350,32 +343,17 @@ void handleDownloadFile(AsyncWebServerRequest *request)
         return;
     }
 
-    if (!LittleFS.exists(path))
+    File file = LittleFS.open(path, "r");
+    if (!file || file.isDirectory())
     {
-        sendErrorResponse(request, 404, "File not found");
+        if (file)
+            file.close();
+        sendErrorResponse(request, !file ? 404 : 400, !file ? "File not found" : "Path is not a file");
         return;
     }
-
-    File f = LittleFS.open(path);
-    if (!f || f.isDirectory())
-    {
-        if (f)
-            f.close();
-        sendErrorResponse(request, 400, "Path is not a file");
-        return;
-    }
-
-    f.close();
 
     String filename = path.substring(path.lastIndexOf('/') + 1);
     LOG_I("下载文件: %s (文件名: %s)", path.c_str(), filename.c_str());
-
-    File file = LittleFS.open(path, "r");
-    if (!file)
-    {
-        sendErrorResponse(request, 500, "Failed to open file");
-        return;
-    }
 
     AsyncFileResponse *response = new AsyncFileResponse(file, path, "application/octet-stream");
     String disposition = "attachment; filename=\"" + filename + "\"";
@@ -490,7 +468,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
     }
     else
     {
-        sendSuccessResponse(request, nullptr);
+        sendSuccessResponse(request);
     }
 
     uploadState.reset();
@@ -504,60 +482,15 @@ void handleGetServoConfig(AsyncWebServerRequest *request)
     uint16_t unlock, lock;
     getServoConfig(unlock, lock);
 
-    JsonDocument *doc = new JsonDocument();
-    (*doc)["unlock"] = unlock;
-    (*doc)["lock"] = lock;
+    JsonDocument doc;
+    doc["unlock"] = unlock;
+    doc["lock"] = lock;
 
     sendSuccessResponse(request, doc);
-    delete doc;
 }
-
 /**
- * PUT /api/servo/config - 更新舵机配置 (使用onBody回调 - 当前未使用)
- * 保留此函数备用，当前使用 request->arg("plain") 方式
+ * POST /api/servo/actions/unlock - 解锁动作
  */
-void handleUpdateServoConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-{
-    static String requestBody = "";
-    if (index == 0)
-    {
-        requestBody = "";
-    }
-    requestBody += String((char *)data, len);
-
-    if (index + len == total)
-    {
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, requestBody);
-
-        if (error)
-        {
-            LOG_E("JSON解析错误");
-            sendErrorResponse(request, 400, "Invalid JSON");
-            return;
-        }
-
-        if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>())
-        {
-            LOG_E("缺少参数");
-            sendErrorResponse(request, 400, "Missing parameters");
-            return;
-        }
-
-        uint16_t unlock = doc["unlock"];
-        uint16_t lock = doc["lock"];
-
-        if (!validateServoPosition(unlock) || !validateServoPosition(lock))
-        {
-            sendErrorResponse(request, 400, "Invalid servo position (must be <= 4095)");
-            return;
-        }
-
-        saveServoConfig(unlock, lock);
-        LOG_I("舵机配置已保存 - 解锁: %d, 锁定: %d", unlock, lock);
-        sendSuccessResponse(request, nullptr);
-    }
-}
 
 /**
  * POST /api/servo/actions/unlock - 解锁动作
@@ -571,7 +504,7 @@ void handleServoUnlock(AsyncWebServerRequest *request)
     }
 
     executeUnlock();
-    sendSuccessResponse(request, nullptr);
+    sendSuccessResponse(request);
 }
 
 /**
@@ -586,7 +519,7 @@ void handleServoLock(AsyncWebServerRequest *request)
     }
 
     executeLock();
-    sendSuccessResponse(request, nullptr);
+    sendSuccessResponse(request);
 }
 
 /**
@@ -594,7 +527,7 @@ void handleServoLock(AsyncWebServerRequest *request)
  */
 void handleRestartSystem(AsyncWebServerRequest *request)
 {
-    sendSuccessResponse(request, nullptr);
+    sendSuccessResponse(request);
     LOG_I("收到重启请求");
     delay(500);
     ESP.restart();
@@ -657,7 +590,7 @@ void handleOtaUpdateComplete(AsyncWebServerRequest *request)
     }
     else
     {
-        sendSuccessResponse(request, nullptr);
+        sendSuccessResponse(request);
         delay(1000);
         ESP.restart();
     }
@@ -715,10 +648,10 @@ void registerApiRoutes(AsyncWebServer *server)
 
     // 文件系统
     server->on("/api/filesystem", HTTP_GET, handleGetFileSystemInfo);
+    server->on("/api/files/download", HTTP_GET, handleDownloadFile);  // 必须在 /api/files 之前注册
     server->on("/api/files", HTTP_GET, handleListFiles);
     server->on("/api/files", HTTP_DELETE, handleDeleteResource);
     server->on("/api/files", HTTP_POST, handleUploadFileComplete, handleUploadFile);
-    server->on("/api/files/download", HTTP_GET, handleDownloadFile);
     server->on("/api/directories", HTTP_POST, handleCreateDirectory);
 
     // 舵机控制
@@ -763,8 +696,9 @@ void registerApiRoutes(AsyncWebServer *server)
         
         saveServoConfig(unlock, lock);
         LOG_I("舵机配置已保存 - 解锁: %d, 锁定: %d", unlock, lock);
-        sendSuccessResponse(request, nullptr);
+        sendSuccessResponse(request);
     });
+    server->on("/api/servo/actions/unlock", HTTP_POST, handleServoUnlock);
     server->on("/api/servo/actions/lock", HTTP_POST, handleServoLock);
 }
 

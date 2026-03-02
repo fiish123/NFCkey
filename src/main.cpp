@@ -559,6 +559,8 @@ const int CARD_COUNT_TO_ACTIVATE_WEBSERVER = 3;
 unsigned long lastCardReadTime = 0;
 const unsigned long CARD_READ_TIMEOUT_MS = 10000; // 10秒内连续读卡才计数
 
+
+
 void setup()
 {
   // 低功耗
@@ -649,7 +651,6 @@ void loop()
   if (!isWebServerRunning())
   {
     LOG_I("=== 激活Web服务器模式 ===");
-    LittleFS.begin();
     initWebServer();
     consecutiveCardCount = 0; // 重置计数器
   }
@@ -809,7 +810,6 @@ void loop()
       {
         if (!isWebServerRunning())
         {
-          LittleFS.begin();
           initWebServer();
           consecutiveCardCount = 0; // 重置计数器
         }
