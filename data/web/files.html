@@ -188,14 +188,19 @@
         function validateAndUpload(file) {
             loadStorageInfo();
             
-            fetch('/api/fs/info')
+            fetch('/api/filesystem')
                 .then(response => {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.json();
                 })
-                .then(data => {
+                .then(response => {
+                    if (!response.success || !response.data) {
+                        showToast('验证失败: ' + (response.message || '未知错误'), 'error');
+                        resetUploadArea();
+                        return;
+                    }
                     const fileSizeKB = Math.ceil(file.size / 1024);
-                    const freeSpaceKB = data.free;
+                    const freeSpaceKB = response.data.free;
                     
                     if (fileSizeKB > freeSpaceKB) {
                         showToast('存储空间不足！\n\n文件大小: ' + fileSizeKB + ' KB\n剩余空间: ' + freeSpaceKB + ' KB\n\n请删除一些文件后再试。', 'warning', { duration: 5000 });
@@ -212,12 +217,17 @@
 
         // 加载存储信息
         function loadStorageInfo() {
-            fetch('/api/fs/info')
+            fetch('/api/filesystem')
                 .then(response => {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.json();
                 })
-                .then(data => {
+                .then(response => {
+                    if (!response.success || !response.data) {
+                        console.error('加载存储信息失败: ' + (response.message || '未知错误'));
+                        return;
+                    }
+                    const data = response.data;
                     document.getElementById('usedStorage').textContent = data.used;
                     document.getElementById('totalStorage').textContent = data.total;
                     document.getElementById('freeStorage').textContent = data.free;
@@ -237,25 +247,29 @@
                     console.error('加载存储信息失败:', err);
                 });
         }
-
+        
         function loadList(path) {
-            fetch('/list?path=' + encodeURIComponent(path))
+            fetch('/api/files?path=' + encodeURIComponent(path))
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('HTTP ' + response.status);
                     }
                     return response.json();
                 })
-                .then(data => {
+                .then(response => {
+                    if (!response.success || !response.data) {
+                        showToast('加载失败: ' + (response.message || '未知错误'), 'error');
+                        return;
+                    }
                     currentPath = path;
                     document.getElementById('currentPath').value = path;
-                    renderList(data);
+                    renderList(response.data);
                 })
                 .catch(err => {
                     showToast('加载失败: ' + err.message, 'error');
                 });
         }
-
+        
         function renderList(items) {
             const container = document.getElementById('fileListContainer');
             if (!items || items.length === 0) {
@@ -339,17 +353,18 @@
             let fullPath = currentPath === '/' ? '/' + dirName : currentPath + '/' + dirName;
             fullPath = fullPath.replace(/\/+/g, '/');
 
-            fetch('/mkdir', {
+            fetch('/api/directories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: 'path=' + encodeURIComponent(fullPath)
             })
+            .then(response => response.json())
             .then(response => {
-                if (response.ok) {
+                if (response.success) {
                     showToast('文件夹创建成功', 'success');
                     loadList(currentPath);
                 } else {
-                    showToast('创建失败', 'error');
+                    showToast('创建失败: ' + (response.message || '未知错误'), 'error');
                 }
             })
             .catch(err => showToast('请求失败: ' + err.message, 'error'));
@@ -375,7 +390,7 @@
 
             // 使用 XMLHttpRequest 支持上传进度
             const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/upload?path=' + encodeURIComponent(currentPath), true);
+            xhr.open('POST', '/api/files?path=' + encodeURIComponent(currentPath), true);
 
             // 上传进度监听
             xhr.upload.onprogress = function(e) {
@@ -421,7 +436,7 @@
             fullPath = fullPath.replace(/\/+/g, '/');
             
             // 使用window.open打开下载链接
-            const downloadUrl = '/download?path=' + encodeURIComponent(fullPath);
+            const downloadUrl = '/api/files/download?path=' + encodeURIComponent(fullPath);
             window.open(downloadUrl, '_blank');
             showToast('开始下载: ' + name, 'info');
         }
@@ -435,20 +450,19 @@
             });
             if (!confirmed) return;
 
-            fetch('/delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'path=' + encodeURIComponent(fullPath)
+            fetch('/api/files?path=' + encodeURIComponent(fullPath), {
+                method: 'DELETE'
             })
+            .then(response => response.json())
             .then(response => {
-                if (response.ok) {
+                if (response.success) {
                     showToast('删除成功', 'success');
                     loadList(currentPath);
                     loadStorageInfo();
-                } else if (response.status === 409) {
+                } else if (response.code === 409) {
                     showToast('目录不为空，无法删除', 'error');
                 } else {
-                    showToast('删除失败', 'error');
+                    showToast('删除失败: ' + (response.message || '未知错误'), 'error');
                 }
             })
             .catch(err => showToast('请求失败: ' + err.message, 'error'));

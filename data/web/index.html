@@ -140,10 +140,14 @@
         // 页面加载时获取系统信息
         window.onload = function() {
             // 获取WiFi信息
-            fetch('/api/wifi/info')
+            fetch('/api/wifi')
                 .then(response => response.json())
-                .then(data => {
-                    document.getElementById('wifi').innerHTML = data.ssid + ' (' + data.ip + ')';
+                .then(response => {
+                    if (response.success && response.data) {
+                        document.getElementById('wifi').innerHTML = response.data.ssid + ' (' + response.data.ip + ')';
+                    } else {
+                        document.getElementById('wifi').innerHTML = '获取失败';
+                    }
                 })
                 .catch(error => {
                     console.error('获取WiFi信息失败:', error);
@@ -151,23 +155,27 @@
                 });
 
             // 获取电池电压
-            fetch('/api/battery/voltage')
+            fetch('/api/battery')
                 .then(response => response.json())
-                .then(data => {
+                .then(response => {
                     const batteryEl = document.getElementById('battery');
-                    const voltage = data.voltage;
-                    const status = data.status;
+                    if (response.success && response.data) {
+                        const voltage = response.data.voltage;
+                        const status = response.data.status;
 
-                    // 设置电压显示文本
-                    batteryEl.textContent = voltage + ' V';
+                        // 设置电压显示文本
+                        batteryEl.textContent = voltage + ' V';
 
-                    // 根据状态设置颜色
-                    if (status === 'normal') {
-                        batteryEl.style.color = '#10b981'; // 绿色
-                    } else if (status === 'low') {
-                        batteryEl.style.color = '#f59e0b'; // 黄色
-                    } else if (status === 'critical') {
-                        batteryEl.style.color = '#ef4444'; // 红色
+                        // 根据状态设置颜色
+                        if (status === 'normal') {
+                            batteryEl.style.color = '#10b981'; // 绿色
+                        } else if (status === 'low') {
+                            batteryEl.style.color = '#f59e0b'; // 黄色
+                        } else if (status === 'critical') {
+                            batteryEl.style.color = '#ef4444'; // 红色
+                        }
+                    } else {
+                        batteryEl.textContent = '获取失败';
                     }
                 })
                 .catch(error => {
@@ -182,7 +190,28 @@
                 title: '确认重启'
             }).then(result => {
                 if (result) {
-                    fetch('/restart', { method: 'POST' })
+                    fetch('/api/system/actions/restart', { method: 'POST' })
+                        .then(response => {
+                            if (response.ok) {
+                                showToast('系统正在重启，请稍候...', 'info', { duration: 5000 });
+                            } else {
+                                showToast('重启失败，请重试', 'error');
+                            }
+                        })
+                        .catch(error => {
+                            showToast('请求失败：' + error, 'error');
+                        });
+                }
+            });
+        }
+        
+        function restartSystem() {
+            showConfirm('确定要重启系统吗？\n\n重启后将回到正常门禁模式，Web服务器将停止运行。', {
+                type: 'danger',
+                title: '确认重启'
+            }).then(result => {
+                if (result) {
+                    fetch('/api/system/actions/restart', { method: 'POST' })
                         .then(response => {
                             if (response.ok) {
                                 showToast('系统正在重启，请稍候...', 'info', { duration: 5000 });

@@ -145,11 +145,11 @@ void handleGetWifiInfo(AsyncWebServerRequest *request)
 void handleGetBatteryInfo(AsyncWebServerRequest *request)
 {
     float voltage = read_battery_voltage();
-    
+
     JsonDocument *doc = new JsonDocument();
     (*doc)["voltage"] = round(voltage * 100) / 100; // 保留2位小数
     (*doc)["status"] = voltage > 3.4 ? "normal" : (voltage > 3.2 ? "low" : "critical");
-    
+
     sendSuccessResponse(request, doc);
     delete doc;
 }
@@ -161,14 +161,14 @@ void handleGetSystemInfo(AsyncWebServerRequest *request)
 {
     JsonDocument *doc = new JsonDocument();
     (*doc)["chipModel"] = ESP.getChipModel();
-    
+
     uint64_t chipId = ESP.getEfuseMac();
     char chipIdStr[17];
     snprintf(chipIdStr, sizeof(chipIdStr), "%016llX", chipId);
     (*doc)["chipId"] = chipIdStr;
-    
+
     (*doc)["version"] = serverConfig.firmwareVersion;
-    
+
     sendSuccessResponse(request, doc);
     delete doc;
 }
@@ -254,7 +254,7 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "Missing path parameter");
         return;
     }
-    
+
     String path = request->getParam("path", true)->value();
     path = normalizePath(path);
 
@@ -284,7 +284,7 @@ void handleDeleteResource(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "Missing path parameter");
         return;
     }
-    
+
     String path = request->getParam("path")->value();
     path = normalizePath(path);
 
@@ -340,42 +340,43 @@ void handleDownloadFile(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "Missing path parameter");
         return;
     }
-    
+
     String path = request->getParam("path")->value();
     path = normalizePath(path);
-    
+
     if (!validatePath(path))
     {
         sendErrorResponse(request, 400, "Invalid path");
         return;
     }
-    
+
     if (!LittleFS.exists(path))
     {
         sendErrorResponse(request, 404, "File not found");
         return;
     }
-    
+
     File f = LittleFS.open(path);
     if (!f || f.isDirectory())
     {
-        if (f) f.close();
+        if (f)
+            f.close();
         sendErrorResponse(request, 400, "Path is not a file");
         return;
     }
-    
+
     f.close();
-    
+
     String filename = path.substring(path.lastIndexOf('/') + 1);
     LOG_I("下载文件: %s (文件名: %s)", path.c_str(), filename.c_str());
-    
+
     File file = LittleFS.open(path, "r");
     if (!file)
     {
         sendErrorResponse(request, 500, "Failed to open file");
         return;
     }
-    
+
     AsyncFileResponse *response = new AsyncFileResponse(file, path, "application/octet-stream");
     String disposition = "attachment; filename=\"" + filename + "\"";
     response->addHeader("Content-Disposition", disposition.c_str());
@@ -481,7 +482,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
         LOG_I("文件上传完成: %s (大小: %u 字节)", uploadState.path.c_str(), uploadState.size);
         uploadState.size = 0;
     }
-    
+
     if (uploadState.error)
     {
         sendErrorResponse(request, 500, "Upload failed");
@@ -491,7 +492,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
     {
         sendSuccessResponse(request, nullptr);
     }
-    
+
     uploadState.reset();
 }
 
@@ -512,7 +513,8 @@ void handleGetServoConfig(AsyncWebServerRequest *request)
 }
 
 /**
- * PUT /api/servo/config - 更新舵机配置
+ * PUT /api/servo/config - 更新舵机配置 (使用onBody回调 - 当前未使用)
+ * 保留此函数备用，当前使用 request->arg("plain") 方式
  */
 void handleUpdateServoConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
 {
@@ -531,12 +533,14 @@ void handleUpdateServoConfig(AsyncWebServerRequest *request, uint8_t *data, size
         if (error)
         {
             LOG_E("JSON解析错误");
+            sendErrorResponse(request, 400, "Invalid JSON");
             return;
         }
 
         if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>())
         {
             LOG_E("缺少参数");
+            sendErrorResponse(request, 400, "Missing parameters");
             return;
         }
 
@@ -719,13 +723,48 @@ void registerApiRoutes(AsyncWebServer *server)
 
     // 舵机控制
     server->on("/api/servo/config", HTTP_GET, handleGetServoConfig);
-    server->on("/api/servo/config", HTTP_PUT,
-               [](AsyncWebServerRequest *request) {},
-               [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-                   // 忽略上传参数，直接调用处理函数
-                   handleUpdateServoConfig(request, data, len, index, len);
-               });
-    server->on("/api/servo/actions/unlock", HTTP_POST, handleServoUnlock);
+    server->on("/api/servo/config", HTTP_PUT, [](AsyncWebServerRequest *request)
+               {
+        // This handler is called when request completes
+        // Body is handled in the body handler below
+    }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        // Body handler - receives request body as data
+        if (index == 0) {
+            LOG_I("收到PUT请求 - body长度: %d", total);
+        }
+        
+        if (len == 0 || total == 0) {
+            sendErrorResponse(request, 400, "Empty request body");
+            return;
+        }
+        
+        // Parse JSON from the body data
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (error) {
+            LOG_E("JSON解析错误: %s", error.c_str());
+            sendErrorResponse(request, 400, "Invalid JSON");
+            return;
+        }
+        
+        if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>()) {
+            sendErrorResponse(request, 400, "Missing parameters");
+            return;
+        }
+        
+        uint16_t unlock = doc["unlock"];
+        uint16_t lock = doc["lock"];
+        
+        if (!validateServoPosition(unlock) || !validateServoPosition(lock)) {
+            sendErrorResponse(request, 400, "Invalid servo position (must be <= 4095)");
+            return;
+        }
+        
+        saveServoConfig(unlock, lock);
+        LOG_I("舵机配置已保存 - 解锁: %d, 锁定: %d", unlock, lock);
+        sendSuccessResponse(request, nullptr);
+    });
     server->on("/api/servo/actions/lock", HTTP_POST, handleServoLock);
 }
 
