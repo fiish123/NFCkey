@@ -648,12 +648,12 @@ void setup()
 
 void loop()
 {
-  if (!isWebServerRunning())
-  {
-    LOG_I("=== 激活Web服务器模式 ===");
-    initWebServer();
-    consecutiveCardCount = 0; // 重置计数器
-  }
+  // if (!isWebServerRunning())
+  // {
+  //   LOG_I("=== 激活Web服务器模式 ===");
+  //   initWebServer();
+  //   consecutiveCardCount = 0; // 重置计数器
+  // }
 
   // 如果Web服务器正在运行，不进入浅睡眠
   if (!isWebServerRunning())
