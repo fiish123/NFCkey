@@ -5,25 +5,42 @@
 
 #include "web_server.h"
 #include "logger.h"
+#include <Preferences.h>
+#include "esp_task_wdt.h"
 
 // 全局 Web 服务器实例
 AsyncWebServer *server = nullptr;
 // Web 服务器运行状态
 WebServerMode webserverMode = WS_MODE_OFF;
 
-// WiFi 连接配置
-const char *ssid = "OpenWIFI2.4G@320";
-const char *password = "SUshe320";
+// WiFi Preferences存储
+Preferences wifiPreferences;
+const char *WIFI_PREF_NAMESPACE = "wifi";
+const char *WIFI_PREF_SSID = "ssid";
+const char *WIFI_PREF_PASSWORD = "password";
+
+// AP模式配置
+const char *AP_SSID = "NFCKey-AP";
+const char *AP_PASSWORD = "";
+const int AP_CHANNEL = 1;
+const bool AP_HIDDEN = false;
+const int AP_MAX_CONNECTION = 1;
+
+
 
 // 服务器配置
 static WebServerConfig serverConfig = {
-    ssid,
-    password,
     "1.0.0",
     80};
 
 // 文件上传状态管理
 static FileUploadState uploadState;
+
+// WiFi测试状态管理
+static bool wifiTestRunning = false;
+static bool wifiTestSuccess = false;
+static String wifiTestResultIP = "";
+static String wifiTestErrorMessage = "";
 
 // =============================================================================
 // 辅助工具函数
@@ -87,13 +104,13 @@ static bool getPathParam(AsyncWebServerRequest *request, const char *paramName,
 }
 
 /**
- * @brief 验证舵机位置是否在有效范围内（0-4095）。
+ * @brief 验证舵机位置是否在有效范围内（0-1280）。
  * @param position 舵机位置值
  * @return true 有效，false 无效
  */
 bool validateServoPosition(uint16_t position)
 {
-    return position <= 4095;
+    return position <= 1280;
 }
 
 /**
@@ -104,6 +121,132 @@ bool validateServoPosition(uint16_t position)
 bool validateOtaFileSize(size_t size)
 {
     return size <= 2097152;
+}
+
+// =============================================================================
+// WiFi配置相关函数
+// =============================================================================
+
+/**
+ * @brief 从Preferences加载WiFi配置
+ * @param ssid 输出SSID
+ * @param password 输出密码
+ * @return true 成功，false 失败或配置为空
+ */
+bool loadWifiConfig(String &ssid, String &password)
+{
+    wifiPreferences.begin(WIFI_PREF_NAMESPACE, true);
+    ssid = wifiPreferences.getString(WIFI_PREF_SSID, "");
+    password = wifiPreferences.getString(WIFI_PREF_PASSWORD, "");
+    wifiPreferences.end();
+
+    if (ssid.length() == 0 || password.length() == 0)
+    {
+        LOG_D("WiFi配置为空");
+        return false;
+    }
+
+    LOG_D("WiFi配置加载成功: %s", ssid.c_str());
+    return true;
+}
+
+/**
+ * @brief 保存WiFi配置到Preferences
+ * @param ssid WiFi SSID
+ * @param password WiFi密码
+ * @return true 成功，false 失败
+ */
+bool saveWifiConfig(const String &ssid, const String &password)
+{
+    if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 63)
+    {
+        LOG_E("WiFi配置参数无效");
+        return false;
+    }
+
+    wifiPreferences.begin(WIFI_PREF_NAMESPACE, false);
+    bool ssidOk = wifiPreferences.putString(WIFI_PREF_SSID, ssid);
+    bool passOk = wifiPreferences.putString(WIFI_PREF_PASSWORD, password);
+    wifiPreferences.end();
+
+    if (ssidOk && passOk)
+    {
+        LOG_I("WiFi配置保存成功: %s", ssid.c_str());
+        return true;
+    }
+
+    LOG_E("WiFi配置保存失败");
+    return false;
+}
+
+/**
+ * @brief 清除WiFi配置
+ * @return true 成功，false 失败
+ */
+bool clearWifiConfig()
+{
+    wifiPreferences.begin(WIFI_PREF_NAMESPACE, false);
+    bool ssidOk = wifiPreferences.remove(WIFI_PREF_SSID);
+    bool passOk = wifiPreferences.remove(WIFI_PREF_PASSWORD);
+    wifiPreferences.end();
+
+    if (ssidOk && passOk)
+    {
+        LOG_I("WiFi配置已清除");
+        return true;
+    }
+
+    LOG_E("WiFi配置清除失败");
+    return false;
+}
+
+// /**
+//  * @brief 连接WiFi
+//  * @param ssid WiFi SSID
+//  * @param password WiFi密码
+//  * @param maxAttempts 最大尝试次数
+//  * @return true 成功，false 失败
+//  */
+// bool connectWifi(const String &ssid, const String &password, int maxAttempts)
+// {
+//     LOG_I("连接WiFi: %s", ssid.c_str());
+
+//     WiFi.mode(WIFI_MODE_APSTA);
+//     WiFi.begin(ssid.c_str(), password.c_str());
+
+//     int attempts = 0;
+//     while (WiFi.status() != WL_CONNECTED && attempts < maxAttempts)
+//     {
+//         vTaskDelay(pdMS_TO_TICKS(500));
+//         esp_task_wdt_reset();
+//         Serial.print(".");
+//         attempts++;
+//     }
+//     Serial.println();
+
+//     if (WiFi.status() == WL_CONNECTED)
+//     {
+//         LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+//         return true;
+//     }
+
+//     WiFi.disconnect(true);
+//     LOG_W("WiFi连接失败");
+//     return false;
+// }
+
+/**
+ * @brief 启动AP模式（热点）
+ */
+void startAPMode()
+{
+    LOG_I("启动AP模式: %s", AP_SSID);
+
+    WiFi.mode(WIFI_MODE_APSTA);
+    WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, AP_HIDDEN, AP_MAX_CONNECTION);
+
+    LOG_I("AP模式启动成功，IP: %s", WiFi.softAPIP().toString().c_str());
+    LOG_I("密码: %s", AP_PASSWORD);
 }
 
 // =============================================================================
@@ -118,7 +261,6 @@ String ApiResponse::toJson() const
 {
     JsonDocument doc;
     doc["success"] = success;
-    doc["code"] = code;
     doc["message"] = message;
 
     if (hasData)
@@ -192,6 +334,298 @@ void handleGetWifiInfo(AsyncWebServerRequest *request)
     doc["ssid"] = WiFi.SSID();
     doc["ip"] = WiFi.localIP().toString();
     doc["rssi"] = WiFi.RSSI();
+    doc["mode"] = WiFi.getMode() == WIFI_AP ? "AP" : "STA";
+    sendSuccessResponse(request, doc);
+}
+
+/**
+ * @brief 处理GET /api/wifi/scan，扫描附近WiFi网络。
+ */
+void handleScanWifi(AsyncWebServerRequest *request)
+{
+    LOG_D("GET /api/wifi/scan 请求");
+
+    // 直接构建完整的 API 响应
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Success";
+    JsonArray networks = doc["data"].to<JsonArray>(); // 直接创建/获取数组
+
+    WiFi.scanNetworks(true);
+    int n = -2;
+
+    while (n <= 0)
+    {
+        esp_task_wdt_reset(); // 喂狗
+        n = WiFi.scanComplete();
+        vTaskDelay(pdMS_TO_TICKS(500));
+    };
+
+    if (n == 0)
+    {
+        LOG_D("未找到WiFi网络");
+    }
+    else
+    {
+        for (int i = 0; i < n; i++)
+        {
+            JsonObject network = networks.add<JsonObject>();
+            network["ssid"] = WiFi.SSID(i);
+            network["rssi"] = WiFi.RSSI(i);
+            network["encryption"] = WiFi.encryptionType(i);
+            network["bssid"] = WiFi.BSSIDstr(i);
+            network["channel"] = WiFi.channel(i);
+        }
+    }
+
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+    WiFi.scanDelete(); // 清除之前的扫描结果
+}
+
+/**
+ * @brief 处理POST /api/wifi/config，保存WiFi配置。
+ */
+void handleSaveWifiConfig(AsyncWebServerRequest *request)
+{
+    LOG_D("POST /api/wifi/config 请求");
+
+    String ssid, password;
+
+    // 从URL参数获取
+    if (request->hasParam("ssid"))
+        ssid = request->getParam("ssid")->value();
+    if (request->hasParam("password"))
+        password = request->getParam("password")->value();
+
+    if (ssid.length() == 0)
+    {
+        sendErrorResponse(request, 400, "缺少SSID参数");
+        return;
+    }
+
+    if (ssid.length() > 32 || password.length() > 63)
+    {
+        sendErrorResponse(request, 400, "参数长度超出限制");
+        return;
+    }
+
+    if (saveWifiConfig(ssid, password))
+    {
+        sendSuccessResponse(request);
+    }
+    else
+    {
+        sendErrorResponse(request, 500, "保存失败");
+    }
+}
+
+/**
+ * @brief 处理DELETE /api/wifi/config，清除WiFi配置。
+ */
+void handleClearWifiConfig(AsyncWebServerRequest *request)
+{
+    LOG_D("DELETE /api/wifi/config 请求");
+
+    if (clearWifiConfig())
+    {
+        sendSuccessResponse(request);
+    }
+    else
+    {
+        sendErrorResponse(request, 500, "清除失败");
+    }
+}
+
+/**
+ * @brief 处理POST /api/wifi/test，测试WiFi连接。
+ */
+void handleTestWifiConnection(AsyncWebServerRequest *request)
+{
+    // 记录API请求日志，便于调试跟踪
+    LOG_D("POST /api/wifi/test 请求");
+
+    sendSuccessResponse(request);
+
+    String ssid, password; // 存储待测试的WiFi名称和密码
+
+    // 从HTTP请求参数中获取ssid和password
+    if (request->hasParam("ssid"))
+        ssid = request->getParam("ssid")->value();
+    if (request->hasParam("password"))
+        password = request->getParam("password")->value();
+
+    // 验证SSID参数是否为空（密码可以为空，但SSID必须提供）
+    if (ssid.length() == 0)
+    {
+        // SSID缺失，返回400错误响应
+        sendErrorResponse(request, 400, "缺少SSID参数");
+        return;
+    }
+
+    // 保存原始网络配置，用于测试完成后恢复
+    String originalSSID, originalPassword;
+    uint8_t originalmode; // 原始网络模式：1=仅STA模式，2=仅AP模式，3=STA+AP混合模式
+
+    // 检测并保存当前网络连接状态
+    if (WiFi.softAPgetStationNum() > 0)
+    {
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            originalmode = 3; // 混合模式
+        }
+        else
+        {
+            originalmode = 2; // 仅AP模式
+        }
+    }
+    else if (WiFi.status() == WL_CONNECTED) // 仅STA模式
+    {
+        originalmode = 1;
+    }
+    else // 无任何有效连接
+    {
+        LOG_E("检测当前连接模式异常");
+        sendErrorResponse(request, 400, "检测当前连接模式异常");
+        return;
+    }
+
+    // 从Preferences中读取已保存的WiFi配置
+    bool hasSavedConfig = loadWifiConfig(originalSSID, originalPassword);
+
+    // 如果Preferences中没有保存的配置，则使用系统配置文件中的默认值
+    if (!hasSavedConfig)
+    {
+        LOG_W("未保存的WiFi配置");
+    }
+
+    // 现在开始执行WiFi测试
+    wifiTestRunning = true;
+    wifiTestSuccess = false;
+    wifiTestResultIP = "";
+    wifiTestErrorMessage = "";
+
+    // 断开当前所有WiFi连接，准备进行测试
+    WiFi.disconnect(true);
+
+    // 使用提供的凭证尝试连接目标WiFi
+    LOG_I("连接WiFi: %s", ssid.c_str());
+    bool wifisuccess = false;
+
+    WiFi.mode(WIFI_MODE_APSTA);
+    WiFi.begin(ssid.c_str(), password.c_str());
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20)
+    {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_task_wdt_reset();
+        Serial.print(".");
+        attempts++;
+    }
+    Serial.println();
+
+    wl_status_t wstatus = WiFi.status();
+
+    if (wstatus == WL_CONNECTED)
+    {
+        LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+        wifisuccess = true;
+    }
+    else
+    {
+        LOG_W("WiFi连接失败");
+        WiFi.disconnect(true);
+        switch (wstatus)
+        {
+        case WL_NO_SSID_AVAIL:
+            wifiTestErrorMessage =("\n错误：找不到该SSID");
+            break;
+        case WL_CONNECT_FAILED:
+            wifiTestErrorMessage =("\n错误：连接失败（可能是密码错误）");
+            break;
+        }
+    }
+
+    // 保存测试结果
+    wifiTestSuccess = wifisuccess;
+    if (wifisuccess)
+    {
+        wifiTestResultIP = WiFi.localIP().toString();
+        wifiTestErrorMessage = "";
+        LOG_I("WiFi测试成功: %s", wifiTestResultIP.c_str());
+    }
+    else
+    {
+        wifiTestResultIP = "";
+        LOG_I("WiFi测试失败");
+    }
+
+    // 测试完成后，立即断开测试网络的连接
+    WiFi.disconnect(true);
+
+    // 恢复原始网络连接
+    if (originalmode == 1) // 如果原始模式是STA模式
+    {
+        LOG_I("恢复原始WiFi: %s", originalSSID.c_str());
+
+        // 使用提供的凭证尝试连接目标WiFi
+        LOG_I("连接WiFi: %s", originalSSID.c_str());
+        bool wifisuccess = false;
+
+        WiFi.mode(WIFI_MODE_APSTA);
+        WiFi.begin(originalSSID.c_str(), originalPassword.c_str());
+
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20)
+        {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_task_wdt_reset();
+            Serial.print(".");
+            attempts++;
+        }
+        Serial.println();
+
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+            wifisuccess = true;
+        }
+        else
+        {
+            WiFi.disconnect(true);
+            LOG_W("WiFi连接失败");
+        }
+
+        // 检查恢复是否成功
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            LOG_I("恢复成功");
+        }
+        else
+        {
+            LOG_E("恢复失败");
+            // 如果恢复失败，启动AP模式确保设备仍可访问
+            startAPMode();
+        }
+    }
+
+    // 测试完成，更新状态
+    wifiTestRunning = false;
+}
+
+/**
+ * @brief 处理GET /api/wifi/test/status，返回WiFi测试状态。
+ */
+void handleGetWifiTestStatus(AsyncWebServerRequest *request)
+{
+    LOG_D("GET /api/wifi/test/status 请求");
+    JsonDocument doc;
+    doc["running"] = wifiTestRunning;
+    doc["success"] = wifiTestSuccess;
+    doc["ip"] = wifiTestResultIP;
+    doc["errorMessage"] = wifiTestErrorMessage;
     sendSuccessResponse(request, doc);
 }
 
@@ -256,7 +690,7 @@ void handleListFiles(AsyncWebServerRequest *request)
     String path;
     if (!getPathParam(request, "path", false, "/", path))
     {
-        sendErrorResponse(request, 400, "Invalid path");
+        sendErrorResponse(request, 400, "无效路径");
         return;
     }
     LOG_D("GET /api/files 请求，路径: %s", path.c_str());
@@ -264,7 +698,7 @@ void handleListFiles(AsyncWebServerRequest *request)
     File dir = LittleFS.open(path);
     if (!dir || !dir.isDirectory())
     {
-        sendErrorResponse(request, 404, "Directory not found");
+        sendErrorResponse(request, 404, "目录未找到");
         return;
     }
 
@@ -294,7 +728,7 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
     String path;
     if (!getPathParam(request, "path", true, "/", path))
     {
-        sendErrorResponse(request, 400, "Invalid path");
+        sendErrorResponse(request, 400, "无效路径");
         return;
     }
     LOG_D("POST /api/directories 请求，路径: %s", path.c_str());
@@ -306,7 +740,8 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
     }
     else
     {
-        sendErrorResponse(request, 500, "Failed to create directory");
+        LOG_E("目录创建失败: %s", path.c_str());
+        sendErrorResponse(request, 500, "目录创建失败");
     }
 }
 
@@ -319,7 +754,7 @@ void handleDeleteResource(AsyncWebServerRequest *request)
     String path;
     if (!getPathParam(request, "path", false, "/", path))
     {
-        sendErrorResponse(request, 400, "Invalid path");
+        sendErrorResponse(request, 400, "无效路径");
         return;
     }
     LOG_D("DELETE /api/files 请求，路径: %s", path.c_str());
@@ -327,7 +762,8 @@ void handleDeleteResource(AsyncWebServerRequest *request)
     File f = LittleFS.open(path);
     if (!f)
     {
-        sendErrorResponse(request, 404, "Not found");
+        LOG_E("删除失败: 路径不存在: %s", path.c_str());
+        sendErrorResponse(request, 404, "未找到");
         return;
     }
 
@@ -342,7 +778,8 @@ void handleDeleteResource(AsyncWebServerRequest *request)
         {
             entry.close();
             dir.close();
-            sendErrorResponse(request, 409, "Directory not empty");
+            LOG_E("删除失败: 目录非空: %s", path.c_str());
+            sendErrorResponse(request, 409, "目录非空");
             return;
         }
         dir.close();
@@ -356,7 +793,8 @@ void handleDeleteResource(AsyncWebServerRequest *request)
     }
     else
     {
-        sendErrorResponse(request, 500, "Failed to delete");
+        LOG_E("删除失败: %s", path.c_str());
+        sendErrorResponse(request, 500, "删除失败");
     }
 }
 
@@ -370,7 +808,7 @@ void handleDownloadFile(AsyncWebServerRequest *request)
     if (!getPathParam(request, "path", false, "/", path))
     {
         LOG_D("GET /api/files/download 请求，无效路径");
-        sendErrorResponse(request, 400, "Invalid path");
+        sendErrorResponse(request, 400, "无效路径");
         return;
     }
     LOG_D("GET /api/files/download 请求，路径: %s", path.c_str());
@@ -380,8 +818,16 @@ void handleDownloadFile(AsyncWebServerRequest *request)
     {
         if (file)
             file.close();
+        if (!file)
+        {
+            LOG_E("下载失败: 文件不存在: %s", path.c_str());
+        }
+        else
+        {
+            LOG_E("下载失败: 路径不是文件: %s", path.c_str());
+        }
         sendErrorResponse(request, !file ? 404 : 400,
-                          !file ? "File not found" : "Path is not a file");
+                          !file ? "文件未找到" : "路径不是文件");
         return;
     }
 
@@ -417,8 +863,6 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         String fullPath = normalizePath(uploadState.path + filename);
         LOG_I("开始上传: %s", fullPath.c_str());
 
-        // 不再进行路径安全性检查
-
         uint64_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
         if (request->contentLength() > freeBytes)
         {
@@ -432,9 +876,9 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         {
             LOG_E("无法创建文件");
             uploadState.error = true;
+
             return;
         }
-        uploadState.size = 0;
     }
 
     if (uploadState.file)
@@ -449,14 +893,14 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
             uploadState.error = true;
             return;
         }
-        uploadState.size += len;
     }
 
     if (final)
     {
         if (uploadState.file)
             uploadState.file.close();
-        uploadState.path = "";
+
+        uploadState.size = len;
     }
 }
 
@@ -474,7 +918,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
 
     if (uploadState.error)
     {
-        sendErrorResponse(request, 500, "Upload failed");
+        sendErrorResponse(request, 500, "上传失败");
         uploadState.error = false;
     }
     else
@@ -506,7 +950,8 @@ void handleServoUnlock(AsyncWebServerRequest *request)
     LOG_D("POST /api/servo/actions/unlock 请求");
     if (isservobusy)
     {
-        sendErrorResponse(request, 409, "Servo is busy");
+        LOG_W("解锁失败: 舵机忙碌");
+        sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
     executeUnlock();
@@ -521,7 +966,8 @@ void handleServoLock(AsyncWebServerRequest *request)
     LOG_D("POST /api/servo/actions/lock 请求");
     if (isservobusy)
     {
-        sendErrorResponse(request, 409, "Servo is busy");
+        LOG_W("锁定失败: 舵机忙碌");
+        sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
     executeLock();
@@ -544,7 +990,7 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
 
     if (len == 0 || total == 0)
     {
-        sendErrorResponse(request, 400, "Empty request body");
+        sendErrorResponse(request, 400, "请求体为空");
         return;
     }
 
@@ -553,13 +999,13 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
     if (error)
     {
         LOG_E("JSON解析错误: %s", error.c_str());
-        sendErrorResponse(request, 400, "Invalid JSON");
+        sendErrorResponse(request, 400, "无效的JSON");
         return;
     }
 
     if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>())
     {
-        sendErrorResponse(request, 400, "Missing parameters");
+        sendErrorResponse(request, 400, "缺少参数");
         return;
     }
 
@@ -568,7 +1014,7 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
 
     if (!validateServoPosition(unlock) || !validateServoPosition(lock))
     {
-        sendErrorResponse(request, 400, "Invalid servo position (must be <= 4095)");
+        sendErrorResponse(request, 400, "舵机位置无效（必须<= 1280）");
         return;
     }
 
@@ -582,6 +1028,7 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
  */
 void handleRestartSystem(AsyncWebServerRequest *request)
 {
+    LOG_I("系统重启请求");
     sendSuccessResponse(request);
     delay(500);
     ESP.restart();
@@ -637,7 +1084,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
 void handleOtaUpdateComplete(AsyncWebServerRequest *request)
 {
     if (Update.hasError())
-        sendErrorResponse(request, 500, "Update failed");
+        sendErrorResponse(request, 500, "更新失败");
     else
     {
         sendSuccessResponse(request);
@@ -658,8 +1105,20 @@ void registerStaticRoutes(AsyncWebServer *server)
 {
     server->on("/web/css/style.css", HTTP_GET, [](AsyncWebServerRequest *request)
                { request->send(LittleFS, "/web/css/style.css", "text/css"); });
+    server->on("/web/css/pages.css", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/css/pages.css", "text/css"); });
     server->on("/web/js/common.js", HTTP_GET, [](AsyncWebServerRequest *request)
                { request->send(LittleFS, "/web/js/common.js", "application/javascript"); });
+    server->on("/web/js/pages/index.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/js/pages/index.js", "application/javascript"); });
+    server->on("/web/js/pages/wifi.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/js/pages/wifi.js", "application/javascript"); });
+    server->on("/web/js/pages/files.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/js/pages/files.js", "application/javascript"); });
+    server->on("/web/js/pages/servo.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/js/pages/servo.js", "application/javascript"); });
+    server->on("/web/js/pages/ota.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/js/pages/ota.js", "application/javascript"); });
 }
 
 /**
@@ -670,6 +1129,8 @@ void registerPageRoutes(AsyncWebServer *server)
 {
     server->on("/", HTTP_GET, [](AsyncWebServerRequest *request)
                { request->send(LittleFS, "/web/index.html", "text/html; charset=utf-8"); });
+    server->on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send(LittleFS, "/web/wifi.html", "text/html; charset=utf-8"); });
     server->on("/ota", HTTP_GET, [](AsyncWebServerRequest *request)
                { request->send(LittleFS, "/web/ota.html", "text/html; charset=utf-8"); });
     server->on("/files", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -684,6 +1145,12 @@ void registerPageRoutes(AsyncWebServer *server)
  */
 void registerApiRoutes(AsyncWebServer *server)
 {
+    // 从上到下匹配
+    server->on("/api/wifi/scan", HTTP_GET, handleScanWifi);
+    server->on("/api/wifi/config", HTTP_POST, handleSaveWifiConfig);
+    server->on("/api/wifi/config", HTTP_DELETE, handleClearWifiConfig);
+    server->on("/api/wifi/test/status", HTTP_GET, handleGetWifiTestStatus);
+    server->on("/api/wifi/test", HTTP_POST, handleTestWifiConnection);
     server->on("/api/wifi", HTTP_GET, handleGetWifiInfo);
     server->on("/api/battery", HTTP_GET, handleGetBatteryInfo);
     server->on("/api/system/info", HTTP_GET, handleGetSystemInfo);
@@ -715,36 +1182,56 @@ void initWebServer()
 
     LOG_I("\n\n=== 初始化Web服务器 ===");
 
-    if (WiFi.status() != WL_CONNECTED)
+    // 尝试从Preferences加载WiFi配置
+    String savedSSID, savedPassword;
+    bool hasSavedConfig = loadWifiConfig(savedSSID, savedPassword);
+
+    // 如果没有保存的配置，使用硬编码配置
+    if (!hasSavedConfig)
     {
-        LOG_I("连接WiFi: %s", serverConfig.ssid);
-        extern void addTolist(unsigned int);
-        addTolist(8);
+        LOG_W("未保存的WiFi配置");
+    }
 
-        WiFi.begin(serverConfig.ssid, serverConfig.password);
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 40)
-        {
-            delay(500);
-            Serial.print(".");
-            attempts++;
-        }
+    // 使用提供的凭证尝试连接目标WiFi
+    LOG_I("连接WiFi: %s", savedSSID.c_str());
+    bool wifisuccess = false;
 
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            LOG_I("连接成功，IP: %s", WiFi.localIP().toString().c_str());
-            addTolist(9);
-        }
-        else
-        {
-            LOG_E("连接失败");
-            addTolist(10);
-            return;
-        }
+    WiFi.mode(WIFI_MODE_APSTA);
+    WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+
+    extern void addTolist(unsigned int);
+    addTolist(8);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20)
+    {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_task_wdt_reset();
+        Serial.print(".");
+        attempts++;
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+        wifisuccess = true;
     }
     else
     {
-        LOG_I("WiFi已连接，IP: %s", WiFi.localIP().toString().c_str());
+        WiFi.disconnect(true);
+        LOG_W("WiFi连接失败");
+    }
+
+    // 如果连接失败，启动AP模式
+    if (!wifisuccess)
+    {
+        addTolist(10);
+        startAPMode();
+    }
+    else
+    {
+        addTolist(9);
     }
 
     server = new AsyncWebServer(serverConfig.serverPort);
@@ -755,7 +1242,15 @@ void initWebServer()
     registerApiRoutes(server);
 
     server->begin();
-    LOG_I("Web服务器启动，访问 http://%s", WiFi.localIP().toString().c_str());
+
+    if (!wifisuccess)
+    {
+        LOG_I("Web服务器启动（AP模式），访问 http://%s", WiFi.softAPIP().toString().c_str());
+    }
+    else
+    {
+        LOG_I("Web服务器启动，访问 http://%s", WiFi.localIP().toString().c_str());
+    }
     LOG_I("===========================");
 }
 

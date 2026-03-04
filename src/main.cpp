@@ -559,8 +559,6 @@ const int CARD_COUNT_TO_ACTIVATE_WEBSERVER = 3;
 unsigned long lastCardReadTime = 0;
 const unsigned long CARD_READ_TIMEOUT_MS = 10000; // 10秒内连续读卡才计数
 
-
-
 void setup()
 {
   // 低功耗
@@ -780,41 +778,47 @@ void loop()
     // FastLED.show();
   }
 
-  // 等待音频完成播放
-  while (isplaying)
-  {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
-
   while (digitalRead(IRQ) == HIGH)
   {
+    sendCardSearchCommand();
     NFCcard currentcard;
     currentcard = ReadCard();
 
     // 卡数据有效检查
-    if (isCardAuthorized(currentcard, authorizedCards, Cardscount))
+    if (currentcard.uidLength != 0)
     {
-      // 检查是否超时重置计数器
-      if (millis() - lastCardReadTime > CARD_READ_TIMEOUT_MS)
-      {
-        consecutiveCardCount = 0;
-      }
-
-      // 增加计数器
-      consecutiveCardCount++;
-      lastCardReadTime = millis();
-      LOG_I("连续读卡次数: %d/%d", consecutiveCardCount, CARD_COUNT_TO_ACTIVATE_WEBSERVER);
-
-      // 检查是否达到激活Web服务器的次数
-      if (consecutiveCardCount >= CARD_COUNT_TO_ACTIVATE_WEBSERVER)
+      if (consecutiveCardCount > 3)
       {
         if (!isWebServerRunning())
         {
           initWebServer();
-          consecutiveCardCount = 0; // 重置计数器
         }
+        consecutiveCardCount = 0; // 重置计数器
+      }
+
+      if (isCardAuthorized(currentcard, authorizedCards, Cardscount))
+      {
+        // 匹配
+        LOG_I("卡授权");
+        consecutiveCardCount++;
+      }
+      else
+      {
+        LOG_I("卡拒绝");
+        consecutiveCardCount = 0;
       }
     }
+    else
+    {
+      LOG_W("卡数据异常");
+      consecutiveCardCount = 0;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
+  // 等待音频完成播放
+  while (isplaying)
+  {
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 

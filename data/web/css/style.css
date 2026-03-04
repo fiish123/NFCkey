@@ -417,7 +417,8 @@ h2 {
 
 /* 上传区域 - 增强Glassmorphism */
 .upload-section,
-.upload-box {
+.upload-box,
+.upload-area {
     border: 2px dashed var(--color-primary);
     padding: var(--spacing-2xl) var(--spacing-lg);
     margin: var(--spacing-lg) 0;
@@ -433,7 +434,8 @@ h2 {
 }
 
 .upload-section:hover,
-.upload-box:hover {
+.upload-box:hover,
+.upload-area:hover {
     border-color: var(--color-primary-hover);
     background: linear-gradient(135deg, rgba(8, 145, 178, 0.12) 0%, rgba(255, 255, 255, 0.95) 100%);
     transform: translateY(-2px);
@@ -441,7 +443,8 @@ h2 {
 }
 
 .upload-section.drag-over,
-.upload-box.drag-over {
+.upload-box.drag-over,
+.upload-area.drag-over {
     border-color: var(--color-success);
     border-style: solid;
     background: linear-gradient(135deg, rgba(220, 252, 231, 0.9) 0%, rgba(255, 255, 255, 0.95) 100%);
@@ -450,7 +453,8 @@ h2 {
 }
 
 .upload-section.drag-over::after,
-.upload-box.drag-over::after {
+.upload-box.drag-over::after,
+.upload-area.drag-over::after {
     content: '释放以上传';
     position: absolute;
     top: 50%;
@@ -608,6 +612,45 @@ h2 {
     font-size: 14px;
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+}
+
+/* 进度条容器 - 用于存储空间显示 */
+.progress-bar-container {
+    width: 100%;
+    height: 24px;
+    background: #E2E8F0;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-top: var(--spacing-md);
+    box-shadow: var(--shadow-inner);
+    display: block;
+}
+
+.progress-bar-container .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-success) 0%, var(--color-success-hover) 100%);
+    border-radius: var(--radius-full);
+    display: block;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-bar-container .progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+.progress-bar-container .progress-bar.warning {
+    background: linear-gradient(90deg, var(--color-warning) 0%, #D97706 100%);
+}
+
+.progress-bar-container .progress-bar.danger {
+    background: linear-gradient(90deg, var(--color-danger) 0%, var(--color-danger-hover) 100%);
 }
 
 /* 按钮基础样式 */

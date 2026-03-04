@@ -15,8 +15,6 @@ enum WebServerMode {
 
 // Web服务器配置结构体
 struct WebServerConfig {
-    const char* ssid;
-    const char* password;
     const char* firmwareVersion;
     uint16_t serverPort;
 };
@@ -64,8 +62,19 @@ bool isWebServerRunning();
 // 停止Web服务器
 void stopWebServer();
 
+// WiFi配置相关函数声明
+bool loadWifiConfig(String &ssid, String &password);
+bool saveWifiConfig(const String &ssid, const String &password);
+bool clearWifiConfig();
+bool connectWifi(const String &ssid, const String &password, int maxAttempts = 20);
+void startAPMode();
+
 // API处理器函数声明
 void handleGetWifiInfo(AsyncWebServerRequest *request);
+void handleScanWifi(AsyncWebServerRequest *request);
+void handleSaveWifiConfig(AsyncWebServerRequest *request);
+void handleClearWifiConfig(AsyncWebServerRequest *request);
+void handleTestWifiConnection(AsyncWebServerRequest *request);
 void handleGetBatteryInfo(AsyncWebServerRequest *request);
 void handleGetSystemInfo(AsyncWebServerRequest *request);
 void handleGetFileSystemInfo(AsyncWebServerRequest *request);
