@@ -1,14 +1,16 @@
 #include <Arduino.h>
-#include <vector>
 #include <Preferences.h>
 // #include <FastLED.h>
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 #include "AudioTools.h"
-#include "AudioTools/AudioCodecs/CodecAACHelix.h"
 #include "AudioTools/Disk/AudioSourceLittleFS.h"
+#include "AudioTools/AudioCodecs/CodecAACHelix.h"
 #include "web_server.h"
 #include "logger.h"
+#include <LittleFS.h>
+#include <ArduinoJson.h>
+#include <vector>
 
 // 读卡器通信
 #define UART1_RX_PIN 19
@@ -32,7 +34,7 @@ volatile float VOLUME1 = 1.0;
 // 5V电源EN (DAC、舵机电源)
 #define EN_5V 2
 
-// 舵机位置配置（使用Preferences存储）
+// 舵机位置配置
 Preferences servoPreferences;
 uint16_t unlockPosition = 800; // 默认解锁位置
 uint16_t lockPosition = 1180;  // 默认锁定位置
@@ -50,6 +52,10 @@ const char *PREF_LOCK_POS = "lock_pos";
 #define ADC_ATTEN ADC_ATTEN_DB_12
 #define VOLTAGE_DIVIDER_RATIO 1.4545f // 分压比 (R1+R2)/R2
 static esp_adc_cal_characteristics_t adc_chars;
+
+// Web服务器自动重启配置
+unsigned long webServerStartTime = 0;
+const unsigned long WEB_SERVER_RESTART_INTERVAL = 30 * 60 * 1000; // 30分钟
 
 // ADC读取
 float read_battery_voltage(void)
@@ -81,6 +87,16 @@ const int loglevel = 2;
 #define LOG_V(...) logMessage(4, "V", __VA_ARGS__)
 void logMessage(const int level, const char *tag, const char *format, ...)
 {
+
+  char buffer[128];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+
+  // 广播到 WebSocket（如果 Web 服务器正在运行）
+  broadcastLogToWebSocket(level, tag, buffer);
+
   if (level > loglevel)
   {
     return;
@@ -89,14 +105,98 @@ void logMessage(const int level, const char *tag, const char *format, ...)
   Serial.print("[");
   Serial.print(tag);
   Serial.print("] ");
-
-  char buffer[128];
-  va_list args;
-  va_start(args, format);
-  vsnprintf(buffer, sizeof(buffer), format, args);
-  va_end(args);
-
   Serial.println(buffer);
+}
+
+bool cardLogicEnabled = true;
+bool isdac_used = false, isservo_used = false, is5v_on = false;
+// 电源管理器1 DAC/2 舵机
+void powermanager(u8_t pin, bool on)
+{
+  if (pin == 1)
+  {
+    if (on && !isdac_used)
+    {
+      LOG_D("DAC启用");
+      isdac_used = true;
+      gpio_hold_dis((gpio_num_t)DAC_EN);
+      digitalWrite(DAC_EN, HIGH);
+      gpio_hold_en((gpio_num_t)DAC_EN);
+    }
+    else if (!on && isdac_used)
+    {
+      LOG_D("DAC禁用");
+      isdac_used = false;
+      gpio_hold_dis((gpio_num_t)DAC_EN);
+      digitalWrite(DAC_EN, LOW);
+      gpio_hold_en((gpio_num_t)DAC_EN);
+    }
+  }
+  else
+  {
+    if (on && !isservo_used)
+    {
+      LOG_D("舵机启用");
+      isservo_used = true;
+    }
+    else if (!on && isservo_used)
+    {
+      LOG_D("舵机禁用");
+      isservo_used = false;
+    }
+  }
+
+  if ((isservo_used || isdac_used) && !on)
+  {
+    return;
+  }
+
+  if (on && !is5v_on)
+  {
+    LOG_D("5V电源开");
+    is5v_on = true;
+    gpio_hold_dis((gpio_num_t)EN_5V);
+    digitalWrite(EN_5V, HIGH);
+    gpio_hold_en((gpio_num_t)EN_5V);
+  }
+  else if (!on && is5v_on)
+  {
+    LOG_D("5V电源关");
+    is5v_on = false;
+    gpio_hold_dis((gpio_num_t)EN_5V);
+    digitalWrite(EN_5V, LOW);
+    gpio_hold_en((gpio_num_t)EN_5V);
+  }
+}
+
+uint8_t connectchoice;
+// 切换1 读卡器/2 舵机通信
+void switchconnect(uint8_t in)
+{
+  if (connectchoice == in)
+  {
+    return;
+  }
+
+  connectchoice = in;
+
+  if (in == 1)
+  {
+    LOG_D("切换至读卡器通信");
+    Serial1.end();
+    vTaskDelay(pdMS_TO_TICKS(10));
+    Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  else
+  {
+    LOG_D("切换至舵机通信");
+    powermanager(2, true);
+    Serial1.end();
+    vTaskDelay(pdMS_TO_TICKS(10));
+    Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
 }
 
 // 全局音频流
@@ -104,6 +204,7 @@ I2SStream i2s;         // i2s
 AACDecoderHelix helix; // aac decoder (for AudioPlayer)
 AudioSourceLittleFS soundsource("/sound", "aac");
 AudioPlayer player1(soundsource, i2s, helix);
+
 // 音频文件路径映射
 const char *getAudioPath(unsigned int in)
 {
@@ -173,7 +274,6 @@ void playerList(void *parameter)
     while (playlistcount - playlistindex > 0)
     {
       isplaying = true;
-
       playAudio(playlist[playlistindex]);
       playlistindex++;
       LOG_D("播放列表 %d/%d", playlistindex, playlistcount);
@@ -181,7 +281,7 @@ void playerList(void *parameter)
 
     if (isplaying)
     {
-      digitalWrite(DAC_EN, LOW);
+      powermanager(1, false);
       LOG_I("播放任务完成~");
       playlistcount = 0;
       playlistindex = 0;
@@ -193,7 +293,7 @@ void playerList(void *parameter)
 // 添加播放任务到列表
 void addTolist(unsigned int in)
 {
-  digitalWrite(DAC_EN, HIGH);
+  powermanager(1, true);
 
   playlist[playlistcount] = in;
   playlistcount++;
@@ -240,6 +340,9 @@ void getServoConfig(uint16_t &unlock, uint16_t &lock)
 // 发送舵机位置控制指令
 void sendServoPosition(unsigned int in)
 {
+  // 切换uart通信
+  switchconnect(2);
+
   uint16_t position = static_cast<uint16_t>(in);
 
   // 指令常量定义
@@ -289,6 +392,9 @@ void sendServoPosition(unsigned int in)
   Serial1.write(HEADER, 2); // 发送包头
   Serial1.write(data, 6);   // 发送数据部分
   Serial1.write(checksum);  // 发送校验和
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+  switchconnect(1);
 }
 
 // 舵机动作
@@ -321,20 +427,8 @@ void executeUnlock()
 {
   isservobusy = true;
 
-  digitalWrite(EN_5V, HIGH);
-  Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(50));
-
-  Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
-  vTaskDelay(pdMS_TO_TICKS(200));
-
   sendServoPosition(unlockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
-
-  Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(50));
-  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
-  digitalWrite(EN_5V, LOW);
 
   isservobusy = false;
   LOG_I("Web控制: 舵机解锁");
@@ -345,23 +439,23 @@ void executeLock()
 {
   isservobusy = true;
 
-  digitalWrite(EN_5V, HIGH);
-
-  Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(50));
-  Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
-  vTaskDelay(pdMS_TO_TICKS(200));
-
   sendServoPosition(lockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
-  Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(50));
-  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
-  digitalWrite(EN_5V, LOW);
-
   isservobusy = false;
   LOG_I("Web控制: 舵机锁定");
+}
+
+// 执行任意动作
+void executePosition(uint16_t position)
+{
+  isservobusy = true;
+
+  sendServoPosition(position);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  isservobusy = false;
+  LOG_I("Web控制: 舵机位置%d", position);
 }
 
 // NFC标签结构体
@@ -369,28 +463,128 @@ struct NFCcard
 {
   uint8_t uid[4];
   uint8_t uidLength;
+  String name;
 };
 
-// 授权卡片列表
-const NFCcard authorizedCards[] = {
-    {{0xF1, 0xB3, 0x9A, 0x3E}, 4}, // A
-    {{0x1, 0x23, 0x8, 0x72}, 4},   // L
-    {{0xE8, 0xFB, 0xB4, 0xCD}, 4}, // Y
-    {{0x2E, 0xE, 0xAD, 0xE0}, 4},  // H
-    {{0xE, 0x23, 0x5D, 0x80}, 4},  // X
-    {{0x41, 0x32, 0xE4, 0xBA}, 4}, // YH
+// 授权卡片列表（动态数组）
+std::vector<NFCcard> authorizedCards;
 
-};
-const int Cardscount = 6;
+// 卡片文件路径
+const char *CARDS_FILE_PATH = "/cards.json";
+
+// 从文件加载卡片数据
+void loadCardsDataFromFile()
+{
+  LOG_I("加载卡片数据...");
+
+  if (!LittleFS.exists(CARDS_FILE_PATH))
+  {
+    LOG_W("卡片文件不存在，创建空卡片文件");
+
+    // 创建空卡片数据
+    JsonDocument doc;
+    JsonArray cardsArray = doc["cards"].to<JsonArray>();
+
+    // 保存空数组到文件
+    File file = LittleFS.open(CARDS_FILE_PATH, "w");
+    if (!file)
+    {
+      LOG_E("无法创建卡片文件");
+      return;
+    }
+
+    serializeJson(doc, file);
+    file.close();
+
+    LOG_I("空卡片文件已创建");
+  }
+
+  // 读取文件
+  File file = LittleFS.open(CARDS_FILE_PATH, "r");
+  if (!file)
+  {
+    LOG_E("无法打开卡片文件");
+    return;
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error)
+  {
+    LOG_E("JSON解析失败: %s", error.c_str());
+    return;
+  }
+
+  // 清空当前列表
+  authorizedCards.clear();
+
+  // 解析卡片数据
+  JsonArray cardsArray = doc["cards"];
+  for (JsonObject cardObj : cardsArray)
+  {
+    NFCcard card;
+    card.uidLength = cardObj["length"];
+    card.name = cardObj["name"] | ""; // 获取名字段，如果不存在则为空字符串
+
+    String uidStr = cardObj["uid"];
+    if (uidStr.length() >= 8)
+    {
+      // 将十六进制字符串转换为字节数组
+      for (int i = 0; i < 4; i++)
+      {
+        String byteStr = uidStr.substring(i * 2, i * 2 + 2);
+        card.uid[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
+      }
+
+      authorizedCards.push_back(card);
+    }
+  }
+
+  LOG_I("卡片数据加载完成，共 %d 张卡", authorizedCards.size());
+}
+
+// 保存卡片数据到文件
+bool saveCardsToFile()
+{
+  JsonDocument doc;
+  JsonArray cardsArray = doc["cards"].to<JsonArray>();
+
+  for (const auto &card : authorizedCards)
+  {
+    JsonObject cardObj = cardsArray.add<JsonObject>();
+    cardObj["length"] = card.uidLength;
+    cardObj["name"] = card.name; // 保存名字字段
+
+    // 将字节数组转换为十六进制字符串
+    char uidStr[9];
+    sprintf(uidStr, "%02X%02X%02X%02X", card.uid[0], card.uid[1], card.uid[2], card.uid[3]);
+    cardObj["uid"] = uidStr;
+  }
+
+  File file = LittleFS.open(CARDS_FILE_PATH, "w");
+  if (!file)
+  {
+    LOG_E("无法打开卡片文件进行写入");
+    return false;
+  }
+
+  serializeJson(doc, file);
+  file.close();
+
+  LOG_I("卡片数据已保存");
+  return true;
+}
 
 // 匹配卡片
-bool isCardAuthorized(const NFCcard &currentCard, const NFCcard authorizedList[], const int listSize)
+bool isCardAuthorized(const NFCcard &currentCard)
 {
   // 遍历授权列表中的每一张卡
-  for (int i = 0; i < listSize; i++)
+  for (size_t i = 0; i < authorizedCards.size(); i++)
   {
     // 先检查长度，长度不同则直接跳过
-    if (currentCard.uidLength != authorizedList[i].uidLength)
+    if (currentCard.uidLength != authorizedCards[i].uidLength)
     {
       continue;
     }
@@ -399,7 +593,7 @@ bool isCardAuthorized(const NFCcard &currentCard, const NFCcard authorizedList[]
     bool isMatch = true;
     for (int j = 0; j < currentCard.uidLength; j++)
     {
-      if (currentCard.uid[j] != authorizedList[i].uid[j])
+      if (currentCard.uid[j] != authorizedCards[i].uid[j])
       {
         isMatch = false; // 发现一个字节不匹配
         break;           // 跳出内层循环，比较下一张授权卡
@@ -531,10 +725,15 @@ NFCcard ReadCard()
 // 读卡指令
 void sendCardSearchCommand()
 {
+  // 切换通信
+  switchconnect(1);
+
   // 寻卡指令
   uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
 
+  // 等待读卡器初始化
   vTaskDelay(pdMS_TO_TICKS(50));
+
   while (Serial1.available() > 0)
   {
     Serial1.read();
@@ -553,11 +752,6 @@ void sendCardSearchCommand()
   }
   LOG_V("读卡耗时 %dms ", now - last);
 }
-// 连续读卡计数器 - 用于激活Web服务器
-volatile int consecutiveCardCount = 0;
-const int CARD_COUNT_TO_ACTIVATE_WEBSERVER = 3;
-unsigned long lastCardReadTime = 0;
-const unsigned long CARD_READ_TIMEOUT_MS = 10000; // 10秒内连续读卡才计数
 
 void setup()
 {
@@ -569,6 +763,7 @@ void setup()
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
 
   // 初始化 UART1
+  connectchoice = 2;
   Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
 
   // 初始化ADC1
@@ -586,15 +781,14 @@ void setup()
 
   // 初始化5V电源控制
   pinMode(EN_5V, OUTPUT);
-  digitalWrite(EN_5V, HIGH);
 
   // 初始化唤醒中断
   pinMode(IRQ, INPUT_PULLDOWN);
   gpio_wakeup_enable((gpio_num_t)IRQ, GPIO_INTR_HIGH_LEVEL);
   esp_sleep_enable_gpio_wakeup();
 
+  // 初始化DAC EN控制
   pinMode(DAC_EN, OUTPUT);
-  digitalWrite(DAC_EN, HIGH);
 
   delay(1000);
 
@@ -603,6 +797,16 @@ void setup()
 
   // 舵机复位
   sendServoPosition(lockPosition);
+
+  // 初始化播放器
+  while (!LittleFS.begin())
+  {
+    LOG_E("LittleFS 挂载失败");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
+  // 加载卡片数据
+  loadCardsDataFromFile();
 
   // 初始化播放器
   auto cfg = i2s.defaultConfig();
@@ -628,13 +832,9 @@ void setup()
   // au:ready
   addTolist(1);
   vTaskDelay(pdMS_TO_TICKS(2000));
-  digitalWrite(EN_5V, LOW);
-  digitalWrite(DAC_EN, LOW);
 
   // 切换读卡器通信
-  Serial1.end();
-  vTaskDelay(pdMS_TO_TICKS(200));
-  Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
+  switchconnect(1);
 
   vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -647,10 +847,9 @@ void setup()
 void loop()
 {
   // if (!isWebServerRunning())
-  // {
-  //   LOG_I("=== 激活Web服务器模式 ===");
+  // {  
   //   initWebServer();
-  //   consecutiveCardCount = 0; // 重置计数器
+  //   webServerStartTime = millis();
   // }
 
   // 如果Web服务器正在运行，不进入浅睡眠
@@ -658,22 +857,33 @@ void loop()
   {
     // 进入浅睡眠
     LOG_I("进入浅睡眠");
-    gpio_hold_en((gpio_num_t)EN_5V);
-    gpio_hold_en((gpio_num_t)DAC_EN);
+    powermanager(1, false);
+    powermanager(2, false);
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_light_sleep_start();
-    gpio_hold_dis((gpio_num_t)EN_5V);
-    gpio_hold_dis((gpio_num_t)DAC_EN);
-    digitalWrite(EN_5V, HIGH);
-    LOG_I("已唤醒");
-    vTaskDelay(pdMS_TO_TICKS(10));
   }
-  else
+  else if (digitalRead(IRQ) != HIGH)
   {
-    // Web服务器运行时，保持唤醒状态
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // 没有检测到卡，不执行后续逻辑
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // 检查是否超过30分钟自动重启
+    if (millis() - webServerStartTime >= WEB_SERVER_RESTART_INTERVAL)
+    {
+      LOG_I("Web服务器运行超过30分钟，自动重启系统");
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      ESP.restart();
+    }
     return;
   }
+
+  if (!cardLogicEnabled)
+  {
+    return;
+  }
+
+  LOG_I("已唤醒");
+  vTaskDelay(pdMS_TO_TICKS(10));
 
   // au:wait
   addTolist(2);
@@ -693,16 +903,10 @@ void loop()
     // 卡数据有效检查
     if (currentcard.uidLength != 0)
     {
-      if (isCardAuthorized(currentcard, authorizedCards, Cardscount))
+      if (isCardAuthorized(currentcard))
       {
         // 匹配
         LOG_I("卡授权");
-
-        // 切换舵机通信
-        Serial1.end();
-        vTaskDelay(pdMS_TO_TICKS(10));
-        Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
-        vTaskDelay(pdMS_TO_TICKS(100));
 
         // leds[0] = CRGB::Green;
         // FastLED.show();
@@ -722,9 +926,6 @@ void loop()
 
         // au:denied
         addTolist(4);
-
-        // 不匹配的卡重置计数器
-        consecutiveCardCount = 0;
       }
     }
     else
@@ -747,10 +948,7 @@ void loop()
       vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // 切换读卡器通信
-    Serial1.end();
-    vTaskDelay(pdMS_TO_TICKS(50));
-    Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
+    powermanager(2, false);
 
     // leds[0] = CRGB::Black;
     // FastLED.show();
@@ -778,6 +976,8 @@ void loop()
     // FastLED.show();
   }
 
+  // 连续读卡2次启动Web管理
+  uint8_t consecutiveCardCount = 0;
   while (digitalRead(IRQ) == HIGH)
   {
     sendCardSearchCommand();
@@ -787,7 +987,7 @@ void loop()
     // 卡数据有效检查
     if (currentcard.uidLength != 0)
     {
-      if (consecutiveCardCount > 3)
+      if (consecutiveCardCount >= 2)
       {
         if (!isWebServerRunning())
         {
@@ -796,7 +996,7 @@ void loop()
         consecutiveCardCount = 0; // 重置计数器
       }
 
-      if (isCardAuthorized(currentcard, authorizedCards, Cardscount))
+      if (isCardAuthorized(currentcard))
       {
         // 匹配
         LOG_I("卡授权");
@@ -821,6 +1021,6 @@ void loop()
   {
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
-
-  digitalWrite(EN_5V, LOW);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  powermanager(1, false);
 }

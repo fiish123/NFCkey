@@ -16,4 +16,7 @@ extern const int loglevel;
 // 日志输出函数
 void logMessage(const int level, const char *tag, const char *format, ...);
 
+// WebSocket 日志广播函数
+void broadcastLogToWebSocket(int level, const char *tag, const char *message);
+
 #endif // LOGGER_H

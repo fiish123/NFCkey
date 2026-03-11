@@ -1,17 +1,37 @@
 /**
  * @file web_server.cpp
  * @brief Web服务器实现，提供WiFi连接、文件管理、OTA升级和舵机控制API。
+ *        注：WiFi管理功能已迁移至WebSocket通信。
  */
 
 #include "web_server.h"
-#include "logger.h"
-#include <Preferences.h>
-#include "esp_task_wdt.h"
+
+// 声明外部变量和函数
+struct NFCcard
+{
+    uint8_t uid[4];
+    uint8_t uidLength;
+    String name;
+};
+extern std::vector<NFCcard> authorizedCards;
+extern const char *CARDS_FILE_PATH;
+extern void loadCardsDataFromFile();
+extern bool saveCardsToFile();
+extern NFCcard ReadCard();
+extern void sendCardSearchCommand();
+// extern uint8_t connectchoice;  // 未使用，已删除
+extern bool cardLogicEnabled;
 
 // 全局 Web 服务器实例
 AsyncWebServer *server = nullptr;
 // Web 服务器运行状态
 WebServerMode webserverMode = WS_MODE_OFF;
+
+// WebSocket 服务器实例
+AsyncWebSocket *ws = nullptr;
+// 日志缓存
+std::deque<LogEntry> logCache;
+#define LOG_CACHE_SIZE 500
 
 // WiFi Preferences存储
 Preferences wifiPreferences;
@@ -26,21 +46,34 @@ const int AP_CHANNEL = 1;
 const bool AP_HIDDEN = false;
 const int AP_MAX_CONNECTION = 1;
 
-
-
 // 服务器配置
 static WebServerConfig serverConfig = {
     "1.0.0",
     80};
 
-// 文件上传状态管理
+// 文件上传状态管理（类型来自头文件）
 static FileUploadState uploadState;
 
-// WiFi测试状态管理
+// WiFi测试状态管理（仍用于异步任务协调）
 static bool wifiTestRunning = false;
 static bool wifiTestSuccess = false;
 static String wifiTestResultIP = "";
 static String wifiTestErrorMessage = "";
+static uint32_t wifiTestClientId = 0;  // 发起测试的客户端ID
+static uint32_t wifiTestRequestId = 0; // 请求ID
+
+// WiFi扫描状态管理
+static bool wifiScanRunning = false;
+
+// WiFi测试参数结构体
+struct WifiTestParams
+{
+    uint32_t clientId;
+    String ssid;
+    String password;
+};
+
+uint32_t uploadsize = 0; // 请求ID
 
 // =============================================================================
 // 辅助工具函数
@@ -51,7 +84,7 @@ static String wifiTestErrorMessage = "";
  * @param path 原始路径
  * @return 规范化后的路径
  */
-String normalizePath(String path)
+String normalizePath(String path) // 按值传递，允许修改副本
 {
     if (path.length() == 0 || path[0] != '/')
         path = '/' + path;
@@ -200,41 +233,6 @@ bool clearWifiConfig()
     return false;
 }
 
-// /**
-//  * @brief 连接WiFi
-//  * @param ssid WiFi SSID
-//  * @param password WiFi密码
-//  * @param maxAttempts 最大尝试次数
-//  * @return true 成功，false 失败
-//  */
-// bool connectWifi(const String &ssid, const String &password, int maxAttempts)
-// {
-//     LOG_I("连接WiFi: %s", ssid.c_str());
-
-//     WiFi.mode(WIFI_MODE_APSTA);
-//     WiFi.begin(ssid.c_str(), password.c_str());
-
-//     int attempts = 0;
-//     while (WiFi.status() != WL_CONNECTED && attempts < maxAttempts)
-//     {
-//         vTaskDelay(pdMS_TO_TICKS(500));
-//         esp_task_wdt_reset();
-//         Serial.print(".");
-//         attempts++;
-//     }
-//     Serial.println();
-
-//     if (WiFi.status() == WL_CONNECTED)
-//     {
-//         LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
-//         return true;
-//     }
-
-//     WiFi.disconnect(true);
-//     LOG_W("WiFi连接失败");
-//     return false;
-// }
-
 /**
  * @brief 启动AP模式（热点）
  */
@@ -250,7 +248,23 @@ void startAPMode()
 }
 
 // =============================================================================
-// API 响应处理
+// 统一WiFi连接函数（静态，文件作用域）
+// =============================================================================
+static bool connectToWiFi(const String &ssid, const String &password, int maxAttempts = 20, int delayMs = 500)
+{
+    WiFi.begin(ssid.c_str(), password.c_str());
+    for (int i = 0; i < maxAttempts; i++)
+    {
+        if (WiFi.status() == WL_CONNECTED)
+            return true;
+        vTaskDelay(pdMS_TO_TICKS(delayMs));
+        esp_task_wdt_reset();
+    }
+    return false;
+}
+
+// =============================================================================
+// API 响应处理（仅用于HTTP API，保持不变）
 // =============================================================================
 
 /**
@@ -287,12 +301,26 @@ void sendApiResponse(AsyncWebServerRequest *request, const ApiResponse &response
     request->send(response.code, "application/json", response.toJson());
 }
 
+// 函数前向声明
+static void sendSuccessResponse(AsyncWebServerRequest *request);
+static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data);
+
 /**
- * @brief 发送成功响应（200 OK）。
+ * @brief 发送成功响应（200 OK），无额外数据。
+ * @param request HTTP请求指针
+ */
+static void sendSuccessResponse(AsyncWebServerRequest *request)
+{
+    JsonDocument emptyDoc;
+    sendSuccessResponse(request, emptyDoc);
+}
+
+/**
+ * @brief 发送成功响应（200 OK），带附加数据。
  * @param request HTTP请求指针
  * @param data    可选的附加数据（JSON文档）
  */
-static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data = JsonDocument())
+static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data)
 {
     ApiResponse response;
     response.success = true;
@@ -321,214 +349,335 @@ static void sendErrorResponse(AsyncWebServerRequest *request, int code, const St
 }
 
 // =============================================================================
-// API 处理器实现
+// JSON 辅助处理函数（统一错误处理）
 // =============================================================================
 
 /**
- * @brief 处理GET /api/wifi，返回当前WiFi信息。
+ * @brief 处理包含JSON体的请求，自动解析并调用回调函数。
+ * @param request HTTP请求指针
+ * @param data    数据指针
+ * @param len     当前数据块长度
+ * @param index   数据块索引
+ * @param total   总数据长度
+ * @param func    回调函数，接受 request 和解析后的 JsonDocument
  */
-void handleGetWifiInfo(AsyncWebServerRequest *request)
+template <typename Func>
+static void handleJsonBody(AsyncWebServerRequest *request, uint8_t *data, size_t len,
+                           size_t index, size_t total, Func func)
 {
-    LOG_D("GET /api/wifi 请求");
+    if (index == 0)
+    {
+        // 可选：记录开始解析
+    }
+    // 只在最后一个数据块时处理
+    if (index + len < total)
+        return;
+
     JsonDocument doc;
-    doc["ssid"] = WiFi.SSID();
-    doc["ip"] = WiFi.localIP().toString();
-    doc["rssi"] = WiFi.RSSI();
-    doc["mode"] = WiFi.getMode() == WIFI_AP ? "AP" : "STA";
-    sendSuccessResponse(request, doc);
+    DeserializationError error = deserializeJson(doc, data, total);
+    if (error)
+    {
+        LOG_E("JSON解析错误: %s", error.c_str());
+        sendErrorResponse(request, 400, "无效的JSON");
+        return;
+    }
+    func(request, doc);
 }
 
+// =============================================================================
+// WebSocket 响应辅助函数
+// =============================================================================
+
 /**
- * @brief 处理GET /api/wifi/scan，扫描附近WiFi网络。
+ * @brief 通过WebSocket向指定客户端发送JSON响应。
+ * @param client 客户端指针
+ * @param action 动作类型（与请求对应）
+ * @param success 是否成功
+ * @param data 附加数据（可选）
+ * @param requestId 请求ID（若请求中提供）
  */
-void handleScanWifi(AsyncWebServerRequest *request)
+static void sendWsResponse(AsyncWebSocketClient *client, const String &action, bool success,
+                           const JsonDocument *data = nullptr, uint32_t requestId = 0)
 {
-    LOG_D("GET /api/wifi/scan 请求");
+    if (!client)
+        return;
 
-    // 直接构建完整的 API 响应
     JsonDocument doc;
-    doc["success"] = true;
-    doc["message"] = "Success";
-    JsonArray networks = doc["data"].to<JsonArray>(); // 直接创建/获取数组
-
-    WiFi.scanNetworks(true);
-    int n = -2;
-
-    while (n <= 0)
-    {
-        esp_task_wdt_reset(); // 喂狗
-        n = WiFi.scanComplete();
-        vTaskDelay(pdMS_TO_TICKS(500));
-    };
-
-    if (n == 0)
-    {
-        LOG_D("未找到WiFi网络");
-    }
-    else
-    {
-        for (int i = 0; i < n; i++)
-        {
-            JsonObject network = networks.add<JsonObject>();
-            network["ssid"] = WiFi.SSID(i);
-            network["rssi"] = WiFi.RSSI(i);
-            network["encryption"] = WiFi.encryptionType(i);
-            network["bssid"] = WiFi.BSSIDstr(i);
-            network["channel"] = WiFi.channel(i);
-        }
-    }
+    doc["action"] = action;
+    doc["success"] = success;
+    if (requestId != 0)
+        doc["requestId"] = requestId;
+    if (data && !data->isNull())
+        doc["data"] = *data;
 
     String response;
     serializeJson(doc, response);
-    request->send(200, "application/json", response);
-    WiFi.scanDelete(); // 清除之前的扫描结果
+    client->text(response);
 }
 
 /**
- * @brief 处理POST /api/wifi/config，保存WiFi配置。
+ * @brief 发送错误响应。
  */
-void handleSaveWifiConfig(AsyncWebServerRequest *request)
+static void sendWsError(AsyncWebSocketClient *client, const String &action,
+                        const String &message, uint32_t requestId = 0)
 {
-    LOG_D("POST /api/wifi/config 请求");
+    JsonDocument errData;
+    errData["message"] = message;
+    sendWsResponse(client, action, false, &errData, requestId);
+}
 
-    String ssid, password;
+// =============================================================================
+// WiFi 管理 WebSocket 处理函数（异步）
+// =============================================================================
 
-    // 从URL参数获取
-    if (request->hasParam("ssid"))
-        ssid = request->getParam("ssid")->value();
-    if (request->hasParam("password"))
-        password = request->getParam("password")->value();
+/**
+ * @brief 处理获取当前WiFi信息
+ */
+void handleWsWifiGetInfo(AsyncWebSocketClient *client, const JsonDocument &req)
+{
+    JsonDocument data;
+    data["ssid"] = WiFi.SSID().c_str();
+    data["ip"] = WiFi.localIP().toString();
+    data["rssi"] = WiFi.RSSI();
+    data["mode"] = WiFi.getMode() == WIFI_AP ? "AP" : "STA";
+    sendWsResponse(client, "wifi/getInfo", true, &data, req["requestId"]);
+}
+
+/**
+ * @brief 处理保存WiFi配置
+ */
+void handleWsWifiSaveConfig(AsyncWebSocketClient *client, const JsonDocument &req)
+{
+    uint32_t requestId = req["requestId"] | 0;
+
+    if (!req["ssid"].is<const char *>() || !req["password"].is<const char *>())
+    {
+        sendWsError(client, "wifi/saveConfig", "缺少ssid或password参数", requestId);
+        return;
+    }
+
+    String ssid = req["ssid"].as<String>();
+    String password = req["password"].as<String>();
 
     if (ssid.length() == 0)
     {
-        sendErrorResponse(request, 400, "缺少SSID参数");
+        sendWsError(client, "wifi/saveConfig", "SSID不能为空", requestId);
         return;
     }
 
     if (ssid.length() > 32 || password.length() > 63)
     {
-        sendErrorResponse(request, 400, "参数长度超出限制");
+        sendWsError(client, "wifi/saveConfig", "参数长度超出限制", requestId);
         return;
     }
 
     if (saveWifiConfig(ssid, password))
     {
-        sendSuccessResponse(request);
+        sendWsResponse(client, "wifi/saveConfig", true, nullptr, requestId);
     }
     else
     {
-        sendErrorResponse(request, 500, "保存失败");
+        sendWsError(client, "wifi/saveConfig", "保存失败", requestId);
     }
 }
 
 /**
- * @brief 处理DELETE /api/wifi/config，清除WiFi配置。
+ * @brief 处理清除WiFi配置
  */
-void handleClearWifiConfig(AsyncWebServerRequest *request)
+void handleWsWifiClearConfig(AsyncWebSocketClient *client, const JsonDocument &req)
 {
-    LOG_D("DELETE /api/wifi/config 请求");
-
+    uint32_t requestId = req["requestId"] | 0;
     if (clearWifiConfig())
     {
-        sendSuccessResponse(request);
+        sendWsResponse(client, "wifi/clearConfig", true, nullptr, requestId);
     }
     else
     {
-        sendErrorResponse(request, 500, "清除失败");
+        sendWsError(client, "wifi/clearConfig", "清除失败", requestId);
     }
 }
 
 /**
- * @brief 处理POST /api/wifi/test，测试WiFi连接。
+ * @brief WiFi扫描任务（在单独任务中执行）
  */
-void handleTestWifiConnection(AsyncWebServerRequest *request)
+void wifiScanTask(void *pvParameters)
 {
-    // 记录API请求日志，便于调试跟踪
-    LOG_D("POST /api/wifi/test 请求");
-
-    sendSuccessResponse(request);
-
-    String ssid, password; // 存储待测试的WiFi名称和密码
-
-    // 从HTTP请求参数中获取ssid和password
-    if (request->hasParam("ssid"))
-        ssid = request->getParam("ssid")->value();
-    if (request->hasParam("password"))
-        password = request->getParam("password")->value();
-
-    // 验证SSID参数是否为空（密码可以为空，但SSID必须提供）
-    if (ssid.length() == 0)
+    // 开始扫描
+    int n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING)
     {
-        // SSID缺失，返回400错误响应
-        sendErrorResponse(request, 400, "缺少SSID参数");
+        WiFi.scanDelete(); // 取消之前的扫描
+    }
+    WiFi.scanNetworks(true); // 异步扫描
+
+    // 等待扫描完成
+    int timeout = 60; // 30秒 (每次检查500ms)
+    while (timeout-- > 0)
+    {
+        n = WiFi.scanComplete();
+        if (n >= 0)
+            break;
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    JsonDocument doc;
+    bool success = true;
+    String errorMessage = "";
+
+    if (n > 0)
+    {
+        // 找到网络，填充结果
+        JsonArray networks = doc.to<JsonArray>();
+        for (int i = 0; i < n; i++)
+        {
+            JsonObject net = networks.add<JsonObject>();
+            net["ssid"] = WiFi.SSID(i).c_str();
+            net["rssi"] = WiFi.RSSI(i);
+            net["encryption"] = WiFi.encryptionType(i);
+            net["bssid"] = WiFi.BSSIDstr(i);
+            net["channel"] = WiFi.channel(i);
+        }
+        WiFi.scanDelete();
+    }
+    else if (n == 0)
+    {
+        // 未找到网络 - 返回空数组
+        doc.to<JsonArray>();
+    }
+    else
+    {
+        // 扫描失败
+        success = false;
+        errorMessage = "扫描超时或失败";
+    }
+
+    // 广播结果给所有客户端
+    JsonDocument resultDoc;
+    resultDoc["action"] = "wifi/scanResult";
+    resultDoc["success"] = success;
+    if (success)
+    {
+        resultDoc["data"] = doc;
+    }
+    else
+    {
+        JsonDocument errData;
+        errData["message"] = errorMessage;
+        resultDoc["data"] = errData;
+    }
+
+    // 等待客户端连接
+    int waitTimeout = 20;
+    bool sent = false;
+    while (waitTimeout-- > 0)
+    {
+        if (ws && ws->count() > 0)
+        {
+            // 有客户端连接，发送结果
+            String response;
+            serializeJson(resultDoc, response);
+            ws->textAll(response);
+            sent = true;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    if (!sent)
+    {
+        LOG_W("WiFi扫描完成但没有客户端连接，结果未发送");
+    }
+
+    wifiScanRunning = false;
+    vTaskDelete(NULL);
+}
+
+/**
+ * @brief 处理开始WiFi扫描
+ */
+void handleWsWifiScan(AsyncWebSocketClient *client, const JsonDocument &req)
+{
+    uint32_t requestId = req["requestId"] | 0;
+
+    if (wifiScanRunning)
+    {
+        sendWsError(client, "wifi/scan", "扫描已在进行中", requestId);
         return;
     }
 
-    // 保存原始网络配置，用于测试完成后恢复
-    String originalSSID, originalPassword;
-    uint8_t originalmode; // 原始网络模式：1=仅STA模式，2=仅AP模式，3=STA+AP混合模式
+    // 标记扫描中
+    wifiScanRunning = true;
 
-    // 检测并保存当前网络连接状态
+    // 立即回复已开始
+    JsonDocument startData;
+    startData["status"] = "started";
+    sendWsResponse(client, "wifi/scan", true, &startData, requestId);
+
+    // 创建任务执行扫描
+    xTaskCreatePinnedToCore(
+        wifiScanTask,
+        "wifi_scan",
+        4096,
+        NULL,
+        1,
+        NULL,
+        tskNO_AFFINITY);
+}
+
+/**
+ * @brief WiFi测试任务
+ */
+void wifiTestTask(void *pvParameters)
+{
+    // 获取参数结构体
+    WifiTestParams *params = (WifiTestParams *)pvParameters;
+    uint32_t clientId = params->clientId;
+    String ssid = params->ssid;
+    String password = params->password;
+    uint32_t requestId = wifiTestRequestId;
+
+    // 保存原始网络配置
+    String originalSSID, originalPassword;
+    uint8_t originalmode = 0;
+
     if (WiFi.softAPgetStationNum() > 0)
     {
         if (WiFi.status() == WL_CONNECTED)
-        {
             originalmode = 3; // 混合模式
-        }
         else
-        {
             originalmode = 2; // 仅AP模式
+    }
+    else if (WiFi.status() == WL_CONNECTED)
+    {
+        originalmode = 1; // 仅STA模式
+    }
+    else
+    {
+        // 异常情况，发送错误
+        JsonDocument errData;
+        errData["message"] = "检测当前连接模式异常";
+        AsyncWebSocketClient *client = ws->client(clientId);
+        if (client && client->status() == WS_CONNECTED)
+        {
+            sendWsResponse(client, "wifi/testResult", false, &errData, requestId);
         }
-    }
-    else if (WiFi.status() == WL_CONNECTED) // 仅STA模式
-    {
-        originalmode = 1;
-    }
-    else // 无任何有效连接
-    {
-        LOG_E("检测当前连接模式异常");
-        sendErrorResponse(request, 400, "检测当前连接模式异常");
+        wifiTestRunning = false;
+        delete params;
+        vTaskDelete(NULL);
         return;
     }
 
-    // 从Preferences中读取已保存的WiFi配置
+    // 尝试加载配置中的wifi信息
     bool hasSavedConfig = loadWifiConfig(originalSSID, originalPassword);
 
-    // 如果Preferences中没有保存的配置，则使用系统配置文件中的默认值
-    if (!hasSavedConfig)
-    {
-        LOG_W("未保存的WiFi配置");
-    }
-
-    // 现在开始执行WiFi测试
-    wifiTestRunning = true;
-    wifiTestSuccess = false;
-    wifiTestResultIP = "";
-    wifiTestErrorMessage = "";
-
-    // 断开当前所有WiFi连接，准备进行测试
+    // 断开当前连接
     WiFi.disconnect(true);
 
-    // 使用提供的凭证尝试连接目标WiFi
     LOG_I("连接WiFi: %s", ssid.c_str());
     bool wifisuccess = false;
+    String errorMessage = "";
 
-    WiFi.mode(WIFI_MODE_APSTA);
-    WiFi.begin(ssid.c_str(), password.c_str());
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20)
-    {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_task_wdt_reset();
-        Serial.print(".");
-        attempts++;
-    }
-    Serial.println();
-
-    wl_status_t wstatus = WiFi.status();
-
-    if (wstatus == WL_CONNECTED)
+    if (connectToWiFi(ssid, password, 20))
     {
         LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
         wifisuccess = true;
@@ -537,97 +686,257 @@ void handleTestWifiConnection(AsyncWebServerRequest *request)
     {
         LOG_W("WiFi连接失败");
         WiFi.disconnect(true);
-        switch (wstatus)
+        switch (WiFi.status())
         {
         case WL_NO_SSID_AVAIL:
-            wifiTestErrorMessage =("\n错误：找不到该SSID");
+            errorMessage = "错误：找不到该SSID";
             break;
         case WL_CONNECT_FAILED:
-            wifiTestErrorMessage =("\n错误：连接失败（可能是密码错误）");
+            errorMessage = "错误：连接失败（可能是密码错误）";
+            break;
+        default:
+            errorMessage = "错误：连接超时";
             break;
         }
     }
 
-    // 保存测试结果
-    wifiTestSuccess = wifisuccess;
+    // 准备结果数据
+    JsonDocument resultData;
+    resultData["success"] = wifisuccess;
     if (wifisuccess)
     {
-        wifiTestResultIP = WiFi.localIP().toString();
-        wifiTestErrorMessage = "";
-        LOG_I("WiFi测试成功: %s", wifiTestResultIP.c_str());
+        resultData["ip"] = WiFi.localIP().toString();
     }
     else
     {
-        wifiTestResultIP = "";
-        LOG_I("WiFi测试失败");
+        resultData["errorMessage"] = errorMessage;
     }
 
-    // 测试完成后，立即断开测试网络的连接
+    // 断开测试网络
     WiFi.disconnect(true);
 
-    // 恢复原始网络连接
-    if (originalmode == 1) // 如果原始模式是STA模式
+    // 恢复原始连接
+    if (originalmode == 1 || originalmode == 3)
     {
         LOG_I("恢复原始WiFi: %s", originalSSID.c_str());
-
-        // 使用提供的凭证尝试连接目标WiFi
-        LOG_I("连接WiFi: %s", originalSSID.c_str());
-        bool wifisuccess = false;
-
-        WiFi.mode(WIFI_MODE_APSTA);
-        WiFi.begin(originalSSID.c_str(), originalPassword.c_str());
-
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20)
+        connectToWiFi(originalSSID, originalPassword, 20);
+        if (WiFi.status() != WL_CONNECTED)
         {
-            vTaskDelay(pdMS_TO_TICKS(500));
-            esp_task_wdt_reset();
-            Serial.print(".");
-            attempts++;
-        }
-        Serial.println();
-
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
-            wifisuccess = true;
-        }
-        else
-        {
-            WiFi.disconnect(true);
-            LOG_W("WiFi连接失败");
-        }
-
-        // 检查恢复是否成功
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            LOG_I("恢复成功");
-        }
-        else
-        {
-            LOG_E("恢复失败");
-            // 如果恢复失败，启动AP模式确保设备仍可访问
+            LOG_E("恢复失败，启动AP模式");
             startAPMode();
         }
     }
 
-    // 测试完成，更新状态
+    // 改为全局广播（模仿扫描结果的方式）
+    JsonDocument resultDoc;
+    resultDoc["action"] = "wifi/testResult";
+    resultDoc["success"] = true;
+    resultDoc["data"] = resultData;
+
+    // 等待客户端连接
+    int waitTimeout = 20;
+    bool sent = false;
+    while (waitTimeout-- > 0)
+    {
+        if (ws && ws->count() > 0)
+        {
+            // 有客户端连接，发送结果
+            String response;
+            serializeJson(resultDoc, response);
+            ws->textAll(response);
+            sent = true;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    if (!sent)
+    {
+        LOG_W("WiFi测试完成但没有客户端连接，结果未发送");
+    }
+
     wifiTestRunning = false;
+    delete params;
+    vTaskDelete(NULL);
 }
 
 /**
- * @brief 处理GET /api/wifi/test/status，返回WiFi测试状态。
+ * @brief 处理开始WiFi测试
  */
-void handleGetWifiTestStatus(AsyncWebServerRequest *request)
+void handleWsWifiTest(AsyncWebSocketClient *client, const JsonDocument &req)
 {
-    LOG_D("GET /api/wifi/test/status 请求");
-    JsonDocument doc;
-    doc["running"] = wifiTestRunning;
-    doc["success"] = wifiTestSuccess;
-    doc["ip"] = wifiTestResultIP;
-    doc["errorMessage"] = wifiTestErrorMessage;
-    sendSuccessResponse(request, doc);
+    uint32_t requestId = req["requestId"] | 0;
+
+    if (wifiTestRunning)
+    {
+        sendWsError(client, "wifi/test", "测试已在进行中", requestId);
+        return;
+    }
+
+    if (!req["ssid"].is<const char *>() || !req["password"].is<const char *>())
+    {
+        sendWsError(client, "wifi/test", "缺少ssid或password参数", requestId);
+        return;
+    }
+
+    String ssid = req["ssid"].as<String>();
+    String password = req["password"].as<String>();
+
+    if (ssid.isEmpty())
+    {
+        sendWsError(client, "wifi/test", "SSID不能为空", requestId);
+        return;
+    }
+
+    // 创建参数结构体
+    WifiTestParams *params = new WifiTestParams();
+    params->clientId = client->id();
+    params->ssid = ssid;
+    params->password = password;
+
+    wifiTestRunning = true;
+    wifiTestClientId = client->id();
+    wifiTestRequestId = requestId;
+
+    // 立即回复已开始
+    JsonDocument startData;
+    startData["status"] = "started";
+    sendWsResponse(client, "wifi/test", true, &startData, requestId);
+
+    // 创建任务执行测试
+    xTaskCreatePinnedToCore(
+        wifiTestTask,
+        "wifi_test",
+        8192, // 测试需要更多栈
+        (void *)params,
+        1,
+        NULL,
+        tskNO_AFFINITY);
 }
+
+/**
+ * @brief 处理查询WiFi测试状态（可选，保留以备客户端需要轮询）
+ */
+void handleWsWifiTestStatus(AsyncWebSocketClient *client, const JsonDocument &req)
+{
+    uint32_t requestId = req["requestId"] | 0;
+    JsonDocument data;
+    data["running"] = wifiTestRunning;
+    data["success"] = wifiTestSuccess;
+    data["ip"] = wifiTestResultIP;
+    data["errorMessage"] = wifiTestErrorMessage;
+    sendWsResponse(client, "wifi/testStatus", true, &data, requestId);
+}
+
+// =============================================================================
+// WebSocket 主事件处理
+// =============================================================================
+
+void initWebSocket()
+{
+    if (ws != nullptr)
+        return;
+
+    ws = new AsyncWebSocket("/ws");
+
+    ws->onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
+                   AwsEventType type, void *arg, uint8_t *data, size_t len)
+                {
+        switch (type) {
+            case WS_EVT_CONNECT:
+            {
+                LOG_D("WebSocket 客户端连接: %u", client->id());
+                // 发送缓存的日志给新连接的客户端（批量发送）
+                JsonDocument doc;
+                JsonArray logsArray = doc.to<JsonArray>();
+                
+                for (const auto &entry : logCache) {
+                    JsonObject logObj = logsArray.add<JsonObject>();
+                    logObj["level"] = entry.level;
+                    logObj["tag"] = entry.tag;
+                    logObj["message"] = entry.message;
+                    logObj["timestamp"] = entry.timestamp;
+                }
+                
+                String response;
+                serializeJson(doc, response);
+                client->text(response);
+                break;
+            }
+            case WS_EVT_DISCONNECT:
+            {
+                LOG_D("WebSocket 客户端断开: %u", client->id());
+                break;
+            }
+            case WS_EVT_DATA:
+            {
+                AwsFrameInfo *info = (AwsFrameInfo*)arg;
+                if (info->opcode == WS_TEXT) {
+                    String msg = String((char*)data, len);
+                    LOG_D("WebSocket 收到消息: %s", msg.c_str());
+
+                    JsonDocument req;
+                    DeserializationError error = deserializeJson(req, msg);
+                    if (error) {
+                        LOG_E("JSON解析错误: %s", error.c_str());
+                        return;
+                    }
+
+                    if (!req["action"].is<const char*>()) {
+                        LOG_W("消息缺少action字段");
+                        return;
+                    }
+
+                    String action = req["action"].as<String>();
+                    // 分发到对应处理函数
+                    if (action == "wifi/getInfo") {
+                        handleWsWifiGetInfo(client, req);
+                    } else if (action == "wifi/saveConfig") {
+                        handleWsWifiSaveConfig(client, req);
+                    } else if (action == "wifi/clearConfig") {
+                        handleWsWifiClearConfig(client, req);
+                    } else if (action == "wifi/scan") {
+                        handleWsWifiScan(client, req);
+                    } else if (action == "wifi/test") {
+                        handleWsWifiTest(client, req);
+                    } else if (action == "wifi/testStatus") {
+                        handleWsWifiTestStatus(client, req);
+                    } else {
+                        LOG_W("未知的action: %s", action.c_str());
+                    }
+                }
+                break;
+            }
+            case WS_EVT_ERROR:
+            {
+                LOG_E("WebSocket 错误: %u", client->id());
+                break;
+            }
+            case WS_EVT_PONG:
+                break;
+        } });
+
+    LOG_I("WebSocket 服务器初始化完成");
+}
+
+/**
+ * @brief 清理 WebSocket 服务器
+ */
+void cleanupWebSocket()
+{
+    if (ws != nullptr)
+    {
+        ws->closeAll();
+        delete ws;
+        ws = nullptr;
+        logCache.clear();
+        LOG_I("WebSocket 服务器已清理");
+    }
+}
+
+// =============================================================================
+// 其余 API 处理器实现（保持不变，仅保留非WiFi的HTTP路由）
+// =============================================================================
 
 /**
  * @brief 处理GET /api/battery，返回电池电压和状态。
@@ -850,9 +1159,10 @@ void handleDownloadFile(AsyncWebServerRequest *request)
 void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t index,
                       uint8_t *data, size_t len, bool final)
 {
+    // 无需互斥锁，因为回调在同一任务中串行执行
     if (!index)
     {
-        uploadState.error = false;
+        uploadState.reset(); // 确保清理之前的状态
         uploadState.active = true;
 
         String reqPath = request->hasParam("path") ? request->getParam("path")->value() : "/";
@@ -868,6 +1178,7 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         {
             LOG_W("空间不足，拒绝上传");
             uploadState.error = true;
+            uploadState.reset();
             return;
         }
 
@@ -876,12 +1187,12 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         {
             LOG_E("无法创建文件");
             uploadState.error = true;
-
+            uploadState.reset();
             return;
         }
     }
 
-    if (uploadState.file)
+    if (uploadState.file && data && len > 0)
     {
         size_t written = uploadState.file.write(data, len);
         if (written != len)
@@ -891,16 +1202,17 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
             String fullPath = normalizePath(uploadState.path + filename);
             LittleFS.remove(fullPath);
             uploadState.error = true;
+            uploadState.reset();
             return;
         }
+        uploadsize += len;
     }
 
     if (final)
     {
         if (uploadState.file)
             uploadState.file.close();
-
-        uploadState.size = len;
+        // 上传完成，状态将在 handleUploadFileComplete 中清理
     }
 }
 
@@ -909,22 +1221,22 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
  */
 void handleUploadFileComplete(AsyncWebServerRequest *request)
 {
-    if (uploadState.active && uploadState.size > 0)
-    {
-        uploadState.file.close();
-        LOG_I("上传完成: 大小 %u 字节", uploadState.size);
-        uploadState.size = 0;
-    }
-
+    // 无需互斥锁
     if (uploadState.error)
     {
         sendErrorResponse(request, 500, "上传失败");
-        uploadState.error = false;
+    }
+    else if (uploadState.active)
+    {
+        LOG_I("上传完成: 大小 %u 字节", uploadsize);
+
+        sendSuccessResponse(request);
     }
     else
     {
-        sendSuccessResponse(request);
+        sendErrorResponse(request, 400, "未进行上传");
     }
+    uploadsize = 0;
     uploadState.reset();
 }
 
@@ -975,12 +1287,50 @@ void handleServoLock(AsyncWebServerRequest *request)
 }
 
 /**
+ * @brief 处理POST /api/servo/actions/position，执行任意位置动作。
+ */
+static void handleServoPosition(AsyncWebServerRequest *request, uint8_t *data,
+                                size_t len, size_t index, size_t total)
+{
+    LOG_D("POST /api/servo/actions/position 请求");
+
+    if (isservobusy)
+    {
+        LOG_W("执行失败: 舵机忙碌");
+        sendErrorResponse(request, 409, "舵机忙碌");
+        return;
+    }
+
+    handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
+                   {
+        // 检查字段是否存在
+        if (doc["position"].isNull())
+        {
+            sendErrorResponse(req, 400, "缺少position参数");
+            return;
+        }
+
+        // 获取字符串并尝试转换为数字
+        String posStr = doc["position"].as<String>();
+        if (posStr.length() == 0 || posStr == "null")
+        {
+            sendErrorResponse(req, 400, "缺少position参数");
+            return;
+        }
+
+        uint16_t position = doc["position"].as<uint16_t>();
+        if (!validateServoPosition(position))
+        {
+            sendErrorResponse(req, 400, "位置值无效（必须<= 1280）");
+            return;
+        }
+
+        executePosition(position);
+        sendSuccessResponse(req); });
+}
+
+/**
  * @brief 处理PUT /api/servo/config，更新舵机配置。
- * @param request HTTP请求
- * @param data    JSON数据
- * @param len     当前数据块长度
- * @param index   数据块索引（0表示开始）
- * @param total   总数据长度
  */
 static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
                                  size_t len, size_t index, size_t total)
@@ -988,39 +1338,26 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
     if (index == 0)
         LOG_D("PUT /api/servo/config 请求体大小: %d", total);
 
-    if (len == 0 || total == 0)
-    {
-        sendErrorResponse(request, 400, "请求体为空");
-        return;
-    }
+    handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
+                   {
+        if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>())
+        {
+            sendErrorResponse(req, 400, "缺少unlock或lock参数");
+            return;
+        }
 
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, data, len);
-    if (error)
-    {
-        LOG_E("JSON解析错误: %s", error.c_str());
-        sendErrorResponse(request, 400, "无效的JSON");
-        return;
-    }
+        uint16_t unlock = doc["unlock"];
+        uint16_t lock = doc["lock"];
 
-    if (!doc["unlock"].is<uint16_t>() || !doc["lock"].is<uint16_t>())
-    {
-        sendErrorResponse(request, 400, "缺少参数");
-        return;
-    }
+        if (!validateServoPosition(unlock) || !validateServoPosition(lock))
+        {
+            sendErrorResponse(req, 400, "舵机位置无效（必须<= 1280）");
+            return;
+        }
 
-    uint16_t unlock = doc["unlock"];
-    uint16_t lock = doc["lock"];
-
-    if (!validateServoPosition(unlock) || !validateServoPosition(lock))
-    {
-        sendErrorResponse(request, 400, "舵机位置无效（必须<= 1280）");
-        return;
-    }
-
-    saveServoConfig(unlock, lock);
-    LOG_I("舵机配置更新: 解锁=%d, 锁定=%d", unlock, lock);
-    sendSuccessResponse(request);
+        saveServoConfig(unlock, lock);
+        LOG_I("舵机配置更新: 解锁=%d, 锁定=%d", unlock, lock);
+        sendSuccessResponse(req); });
 }
 
 /**
@@ -1052,11 +1389,13 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
         if (!validateOtaFileSize(request->contentLength()))
         {
             LOG_E("固件过大");
+            Update.abort();
             return;
         }
         if (!Update.begin(request->contentLength()))
         {
             Update.printError(Serial);
+            Update.abort();
             return;
         }
         Update.onProgress([](size_t progress, size_t total)
@@ -1066,6 +1405,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
     if (Update.write(data, len) != len)
     {
         Update.printError(Serial);
+        Update.abort();
         return;
     }
 
@@ -1074,7 +1414,10 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
         if (Update.end(true))
             LOG_I("OTA成功，即将重启");
         else
+        {
             Update.printError(Serial);
+            Update.abort();
+        }
     }
 }
 
@@ -1084,7 +1427,9 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
 void handleOtaUpdateComplete(AsyncWebServerRequest *request)
 {
     if (Update.hasError())
-        sendErrorResponse(request, 500, "更新失败");
+    {
+        sendErrorResponse(request, 500, "OTA更新失败");
+    }
     else
     {
         sendSuccessResponse(request);
@@ -1094,64 +1439,411 @@ void handleOtaUpdateComplete(AsyncWebServerRequest *request)
 }
 
 // =============================================================================
-// 路由注册函数
+// 卡片管理 API 处理器实现（保持不变）
 // =============================================================================
 
 /**
- * @brief 注册静态资源路由（CSS、JS）。
+ * @brief 处理GET /api/cards，获取所有授权卡片列表
+ */
+void handleGetCardsList(AsyncWebServerRequest *request)
+{
+    LOG_D("GET /api/cards 请求");
+
+    JsonDocument doc;
+    JsonArray cardsArray = doc["cards"].to<JsonArray>();
+
+    for (const auto &card : authorizedCards)
+    {
+        JsonObject cardObj = cardsArray.add<JsonObject>();
+        cardObj["length"] = card.uidLength;
+        cardObj["name"] = card.name;
+
+        char uidStr[9];
+        snprintf(uidStr, sizeof(uidStr), "%02X%02X%02X%02X", card.uid[0], card.uid[1], card.uid[2], card.uid[3]);
+        cardObj["uid"] = uidStr;
+    }
+
+    sendSuccessResponse(request, doc);
+    LOG_D("返回卡片列表，共 %d 张", authorizedCards.size());
+}
+
+/**
+ * @brief 处理POST /api/cards，添加新卡片
+ */
+void handleAddCard(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+{
+    if (index == 0)
+        LOG_D("POST /api/cards 请求体大小: %d", total);
+
+    handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
+                   {
+        if (!doc["uid"].is<const char*>() || !doc["name"].is<const char*>())
+        {
+            sendErrorResponse(req, 400, "缺少uid或name参数");
+            return;
+        }
+
+        String uid = doc["uid"].as<String>();
+        String name = doc["name"].as<String>();
+
+        // 验证UID格式（8位十六进制）
+        if (uid.length() != 8)
+        {
+            sendErrorResponse(req, 400, "UID格式错误，应为8位十六进制");
+            return;
+        }
+        // 额外检查是否为有效十六进制
+        for (char c : uid) {
+            if (!isxdigit(c)) {
+                sendErrorResponse(req, 400, "UID包含非法字符");
+                return;
+            }
+        }
+        // 限制名称长度
+        if (name.length() > 32) {
+            sendErrorResponse(req, 400, "名称长度不能超过32字符");
+            return;
+        }
+
+        // 检查UID是否已存在
+        for (const auto &card : authorizedCards)
+        {
+            char existingUid[9];
+            snprintf(existingUid, sizeof(existingUid), "%02X%02X%02X%02X", card.uid[0], card.uid[1], card.uid[2], card.uid[3]);
+            if (uid.equalsIgnoreCase(existingUid))
+            {
+                sendErrorResponse(req, 409, "该UID已存在");
+                return;
+            }
+        }
+
+        // 创建新卡片
+        NFCcard newCard;
+        newCard.uidLength = 4;
+        newCard.name = name;
+
+        // 将十六进制字符串转换为字节数组
+        for (int i = 0; i < 4; i++)
+        {
+            String byteStr = uid.substring(i * 2, i * 2 + 2);
+            newCard.uid[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
+        }
+
+        authorizedCards.push_back(newCard);
+
+        if (saveCardsToFile())
+        {
+            LOG_I("卡片添加成功: UID=%s, 名称=%s", uid.c_str(), name.c_str());
+            sendSuccessResponse(req);
+        }
+        else
+        {
+            authorizedCards.pop_back();
+            sendErrorResponse(req, 500, "保存失败");
+        } });
+}
+
+/**
+ * @brief 处理DELETE /api/cards，删除指定卡片
+ */
+void handleDeleteCard(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("uid"))
+    {
+        sendErrorResponse(request, 400, "缺少uid参数");
+        return;
+    }
+
+    String uid = request->getParam("uid")->value();
+    LOG_D("DELETE /api/cards 请求，UID: %s", uid.c_str());
+
+    bool found = false;
+    auto it = authorizedCards.begin();
+    while (it != authorizedCards.end())
+    {
+        char existingUid[9];
+        snprintf(existingUid, sizeof(existingUid), "%02X%02X%02X%02X", it->uid[0], it->uid[1], it->uid[2], it->uid[3]);
+
+        if (uid.equalsIgnoreCase(existingUid))
+        {
+            authorizedCards.erase(it);
+            found = true;
+            break;
+        }
+        it++;
+    }
+
+    if (!found)
+    {
+        sendErrorResponse(request, 404, "未找到该卡片");
+        return;
+    }
+
+    if (saveCardsToFile())
+    {
+        LOG_I("卡片删除成功: UID=%s", uid.c_str());
+        sendSuccessResponse(request);
+    }
+    else
+    {
+        sendErrorResponse(request, 500, "保存失败");
+    }
+}
+
+/**
+ * @brief 处理GET /api/cards/read，从读卡器读取卡片UID
+ */
+void handleReadCard(AsyncWebServerRequest *request)
+{
+    LOG_D("GET /api/cards/read 请求");
+
+    sendCardSearchCommand();
+
+    unsigned long startTime = millis();
+    const unsigned long timeout = 2000; // 2秒超时
+
+    NFCcard readResult;
+    readResult.uidLength = 0;
+
+    // 使用无符号减法，即使 millis() 溢出也能正确计算时间差（前提是 timeout < 2^32）
+    while ((millis() - startTime) < timeout)
+    {
+        esp_task_wdt_reset();
+
+        if (Serial1.available() >= 14)
+        {
+            readResult = ReadCard();
+            if (readResult.uidLength != 0)
+            {
+                break;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (readResult.uidLength == 0)
+    {
+        sendErrorResponse(request, 404, "未读取到卡片，请将卡片放在读卡器上");
+        return;
+    }
+
+    JsonDocument doc;
+    char uidStr[9];
+    snprintf(uidStr, sizeof(uidStr), "%02X%02X%02X%02X", readResult.uid[0], readResult.uid[1], readResult.uid[2], readResult.uid[3]);
+    doc["uid"] = uidStr;
+    doc["length"] = readResult.uidLength;
+
+    sendSuccessResponse(request, doc);
+    LOG_I("读取卡片成功: UID=%s", uidStr);
+}
+
+/**
+ * @brief 处理GET /api/cards/test，测试卡片是否授权
+ */
+void handleTestCard(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("uid"))
+    {
+        sendErrorResponse(request, 400, "缺少uid参数");
+        return;
+    }
+
+    String uid = request->getParam("uid")->value();
+    LOG_D("GET /api/cards/test 请求，UID: %s", uid.c_str());
+
+    // 验证UID格式
+    if (uid.length() != 8)
+    {
+        sendErrorResponse(request, 400, "UID格式错误");
+        return;
+    }
+    for (char c : uid)
+    {
+        if (!isxdigit(c))
+        {
+            sendErrorResponse(request, 400, "UID包含非法字符");
+            return;
+        }
+    }
+
+    // 创建测试卡片
+    NFCcard testCard;
+    testCard.uidLength = 4;
+    for (int i = 0; i < 4; i++)
+    {
+        String byteStr = uid.substring(i * 2, i * 2 + 2);
+        testCard.uid[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
+    }
+
+    bool authorized = false;
+    for (const auto &card : authorizedCards)
+    {
+        if (testCard.uidLength == card.uidLength)
+        {
+            bool match = true;
+            for (int j = 0; j < testCard.uidLength; j++)
+            {
+                if (testCard.uid[j] != card.uid[j])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                authorized = true;
+                break;
+            }
+        }
+    }
+
+    JsonDocument doc;
+    doc["authorized"] = authorized;
+    doc["uid"] = uid;
+
+    if (authorized)
+    {
+        LOG_I("卡片测试通过: UID=%s", uid.c_str());
+        doc["message"] = "该卡片已授权";
+    }
+    else
+    {
+        LOG_I("卡片测试未通过: UID=%s", uid.c_str());
+        doc["message"] = "该卡片未授权";
+    }
+
+    sendSuccessResponse(request, doc);
+}
+
+/**
+ * @brief 处理GET /api/cards/logic-enabled，获取卡片逻辑启用状态
+ */
+void handleGetCardLogicConfig(AsyncWebServerRequest *request)
+{
+    LOG_D("GET /api/cards/logic-enabled 请求");
+    JsonDocument doc;
+    doc["enabled"] = cardLogicEnabled;
+    sendSuccessResponse(request, doc);
+}
+
+/**
+ * @brief 处理POST /api/cards/logic-enabled，设置卡片逻辑启用状态
+ */
+void handleSetCardLogicConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+{
+    if (index == 0)
+        LOG_D("POST /api/cards/logic-enabled 请求体大小: %d", total);
+
+    handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
+                   {
+        if (!doc["enabled"].is<bool>())
+        {
+            sendErrorResponse(req, 400, "缺少enabled参数");
+            return;
+        }
+        cardLogicEnabled = doc["enabled"];
+        LOG_I("卡片逻辑状态已更新: %s", cardLogicEnabled ? "启用" : "禁用");
+        sendSuccessResponse(req); });
+}
+
+// =============================================================================
+// 路由注册函数（移除了所有WiFi HTTP路由）
+// =============================================================================
+
+/**
+ * @brief 智能发送文件：若客户端支持 gzip 且存在 .gz 文件，则发送压缩版并添加 Content-Encoding: gzip 和缓存头
+ * @param request    HTTP 请求对象
+ * @param path       原始文件路径（如 "/web/index.html"）
+ * @param contentType MIME 类型（如 "text/html; charset=utf-8"）
+ */
+void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, const String &contentType)
+{
+    String gzPath = path + ".gz";
+
+    bool acceptGzip = false;
+    if (request->hasHeader("Accept-Encoding"))
+    {
+        String accept = request->getHeader("Accept-Encoding")->value();
+        if (accept.indexOf("gzip") >= 0)
+        {
+            acceptGzip = true;
+        }
+    }
+
+    if (acceptGzip && LittleFS.exists(gzPath))
+    {
+        AsyncWebServerResponse *response = request->beginResponse(LittleFS, gzPath, contentType);
+        response->addHeader("Content-Encoding", "gzip");
+        response->addHeader("Cache-Control", "public, max-age=1800");
+        request->send(response);
+        return;
+    }
+
+    if (LittleFS.exists(path))
+    {
+        AsyncWebServerResponse *response = request->beginResponse(LittleFS, path, contentType);
+        response->addHeader("Cache-Control", "public, max-age=1800");
+        request->send(response);
+    }
+    else
+    {
+        request->send(404, "text/plain", "File not found");
+    }
+}
+
+/**
+ * @brief 注册静态资源路由（CSS、JS），支持预压缩 gzip。
  * @param server AsyncWebServer指针
  */
 void registerStaticRoutes(AsyncWebServer *server)
 {
     server->on("/web/css/style.css", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/css/style.css", "text/css"); });
+               { servePrecompiledFile(request, "/web/css/style.css", "text/css"); });
     server->on("/web/css/pages.css", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/css/pages.css", "text/css"); });
+               { servePrecompiledFile(request, "/web/css/pages.css", "text/css"); });
     server->on("/web/js/common.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/common.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/common.js", "application/javascript"); });
     server->on("/web/js/pages/index.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/pages/index.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/pages/index.js", "application/javascript"); });
     server->on("/web/js/pages/wifi.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/pages/wifi.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/pages/wifi.js", "application/javascript"); });
     server->on("/web/js/pages/files.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/pages/files.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/pages/files.js", "application/javascript"); });
     server->on("/web/js/pages/servo.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/pages/servo.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/pages/servo.js", "application/javascript"); });
     server->on("/web/js/pages/ota.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/js/pages/ota.js", "application/javascript"); });
+               { servePrecompiledFile(request, "/web/js/pages/ota.js", "application/javascript"); });
+    server->on("/web/js/pages/cards.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { servePrecompiledFile(request, "/web/js/pages/cards.js", "application/javascript"); });
 }
 
 /**
- * @brief 注册页面路由（HTML页面）。
+ * @brief 注册页面路由（HTML页面），支持预压缩 gzip。
  * @param server AsyncWebServer指针
  */
 void registerPageRoutes(AsyncWebServer *server)
 {
     server->on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/index.html", "text/html; charset=utf-8"); });
+               { servePrecompiledFile(request, "/web/index.html", "text/html; charset=utf-8"); });
     server->on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/wifi.html", "text/html; charset=utf-8"); });
+               { servePrecompiledFile(request, "/web/wifi.html", "text/html; charset=utf-8"); });
     server->on("/ota", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/ota.html", "text/html; charset=utf-8"); });
+               { servePrecompiledFile(request, "/web/ota.html", "text/html; charset=utf-8"); });
     server->on("/files", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/files.html", "text/html; charset=utf-8"); });
+               { servePrecompiledFile(request, "/web/files.html", "text/html; charset=utf-8"); });
+    server->on("/cards", HTTP_GET, [](AsyncWebServerRequest *request)
+               { servePrecompiledFile(request, "/web/cards.html", "text/html; charset=utf-8"); });
     server->on("/servo", HTTP_GET, [](AsyncWebServerRequest *request)
-               { request->send(LittleFS, "/web/servo.html", "text/html; charset=utf-8"); });
+               { servePrecompiledFile(request, "/web/servo.html", "text/html; charset=utf-8"); });
 }
 
 /**
- * @brief 注册API路由。
+ * @brief 注册API路由（移除了所有WiFi相关的路由）。
  * @param server AsyncWebServer指针
  */
 void registerApiRoutes(AsyncWebServer *server)
 {
-    // 从上到下匹配
-    server->on("/api/wifi/scan", HTTP_GET, handleScanWifi);
-    server->on("/api/wifi/config", HTTP_POST, handleSaveWifiConfig);
-    server->on("/api/wifi/config", HTTP_DELETE, handleClearWifiConfig);
-    server->on("/api/wifi/test/status", HTTP_GET, handleGetWifiTestStatus);
-    server->on("/api/wifi/test", HTTP_POST, handleTestWifiConnection);
-    server->on("/api/wifi", HTTP_GET, handleGetWifiInfo);
+    // 注意：WiFi管理已迁移至WebSocket，此处不再注册相关路由
     server->on("/api/battery", HTTP_GET, handleGetBatteryInfo);
     server->on("/api/system/info", HTTP_GET, handleGetSystemInfo);
     server->on("/api/system/actions/restart", HTTP_POST, handleRestartSystem);
@@ -1166,6 +1858,14 @@ void registerApiRoutes(AsyncWebServer *server)
     server->on("/api/servo/config", HTTP_PUT, [](AsyncWebServerRequest *request) {}, NULL, handlePutServoConfig);
     server->on("/api/servo/actions/unlock", HTTP_POST, handleServoUnlock);
     server->on("/api/servo/actions/lock", HTTP_POST, handleServoLock);
+    server->on("/api/servo/actions/position", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleServoPosition);
+    server->on("/api/cards/read", HTTP_GET, handleReadCard);
+    server->on("/api/cards/test", HTTP_GET, handleTestCard);
+    server->on("/api/cards/logic-enabled", HTTP_GET, handleGetCardLogicConfig);
+    server->on("/api/cards/logic-enabled", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleSetCardLogicConfig);
+    server->on("/api/cards", HTTP_GET, handleGetCardsList);
+    server->on("/api/cards", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleAddCard);
+    server->on("/api/cards", HTTP_DELETE, handleDeleteCard);
 }
 
 // =============================================================================
@@ -1182,65 +1882,52 @@ void initWebServer()
 
     LOG_I("\n\n=== 初始化Web服务器 ===");
 
-    // 尝试从Preferences加载WiFi配置
+    addTolist(8);
+
     String savedSSID, savedPassword;
     bool hasSavedConfig = loadWifiConfig(savedSSID, savedPassword);
 
-    // 如果没有保存的配置，使用硬编码配置
     if (!hasSavedConfig)
     {
         LOG_W("未保存的WiFi配置");
     }
 
-    // 使用提供的凭证尝试连接目标WiFi
     LOG_I("连接WiFi: %s", savedSSID.c_str());
     bool wifisuccess = false;
 
-    WiFi.mode(WIFI_MODE_APSTA);
-    WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+    WiFi.mode(WIFI_MODE_STA);
 
-    extern void addTolist(unsigned int);
-    addTolist(8);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20)
+    // 使用统一的 connectToWiFi 函数
+    if (connectToWiFi(savedSSID, savedPassword, 20))
     {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_task_wdt_reset();
-        Serial.print(".");
-        attempts++;
-    }
-    Serial.println();
+        addTolist(9);
 
-    if (WiFi.status() == WL_CONNECTED)
-    {
         LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
         wifisuccess = true;
     }
     else
     {
+        addTolist(10);
+
         WiFi.disconnect(true);
         LOG_W("WiFi连接失败");
     }
 
-    // 如果连接失败，启动AP模式
     if (!wifisuccess)
     {
-        addTolist(10);
         startAPMode();
-    }
-    else
-    {
-        addTolist(9);
     }
 
     server = new AsyncWebServer(serverConfig.serverPort);
     webserverMode = WS_MODE_RUNNING;
 
+    initWebSocket();
+
     registerStaticRoutes(server);
     registerPageRoutes(server);
     registerApiRoutes(server);
 
+    server->addHandler(ws);
     server->begin();
 
     if (!wifisuccess)
@@ -1277,4 +1964,43 @@ void stopWebServer()
         webserverMode = WS_MODE_OFF;
         LOG_I("Web服务器已停止");
     }
+
+    cleanupWebSocket();
+}
+
+// =============================================================================
+// WebSocket 日志系统（保持不变）
+// =============================================================================
+
+/**
+ * @brief 广播日志到所有 WebSocket 客户端
+ * @param level 日志级别
+ * @param tag 日志标签
+ * @param message 日志消息
+ */
+void broadcastLogToWebSocket(int level, const char *tag, const char *message)
+{
+    if (ws == nullptr || !isWebServerRunning())
+        return;
+
+    unsigned long timestamp = millis();
+    LogEntry entry(level, tag, message, timestamp);
+
+    logCache.push_back(entry);
+    if (logCache.size() > LOG_CACHE_SIZE)
+    {
+        logCache.pop_front();
+    }
+
+    // 构建单条日志JSON
+    JsonDocument doc;
+    doc["level"] = level;
+    doc["tag"] = tag;
+    doc["message"] = message;
+    doc["timestamp"] = timestamp;
+
+    String response;
+    serializeJson(doc, response);
+
+    ws->textAll(response);
 }

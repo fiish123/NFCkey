@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>舵机管理 - NFC门禁</title>
+    <link rel="stylesheet" href="/web/css/style.css">
+    <link rel="stylesheet" href="/web/css/pages.css">
+</head>
+<body id="page-servo">
+    <div class="container narrow" data-animate>
+        <h1>舵机管理</h1>
+
+        <!-- 舵机状态 -->
+        <div id="servoStatus" class="servo-status idle" style="margin-bottom: var(--spacing-xl);">
+            <span class="status-dot"></span>
+            <span>状态: 空闲</span>
+        </div>
+
+        <!-- 舵机控制与配置 -->
+        <div class="section">
+            <h3>舵机控制与配置</h3>
+            
+            <!-- 舵机控制按钮 -->
+            <div class="btn-group horizontal" style="margin-bottom: var(--spacing-lg);">
+                <button onclick="unlock()" class="btn btn-success" id="unlockBtn" style="flex: 1;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                    解锁
+                </button>
+                <button onclick="lock()" class="btn btn-warning" id="lockBtn" style="flex: 1;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                    </svg>
+                    锁定
+                </button>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-md) 0 var(--spacing-lg) 0;">
+
+            <!-- 实时测试位置 -->
+            <div style="margin-bottom: var(--spacing-xl);">
+                <h4 style="font-size: 14px; color: var(--color-text-muted); margin-bottom: var(--spacing-sm); font-weight: 500;">实时测试位置</h4>
+                <div class="servo-position-control">
+                    <div class="position-header">
+                        <label for="testSlider">测试位置</label>
+                        <span class="position-percent" id="testPercent">0%</span>
+                    </div>
+                    <div class="position-control-row">
+                        <input type="range" id="testSlider" min="0" max="1280" value="0" class="slider" />
+                        <input type="number" id="testPos" min="0" max="1280" value="0" class="position-input" />
+                    </div>
+                </div>
+                <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                    拖动滑动条可实时控制舵机位置
+                </p>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-lg) 0 var(--spacing-lg) 0;">
+
+            <!-- 舵机位置配置 -->
+            <div style="margin-bottom: var(--spacing-md);">
+                <h4 style="font-size: 14px; color: var(--color-text-muted); margin-bottom: var(--spacing-sm); font-weight: 500;">位置配置</h4>
+                
+                <!-- 解锁位置 -->
+                <div class="servo-position-control">
+                    <div class="position-header">
+                        <label for="unlockPos">解锁位置</label>
+                        <span class="position-percent" id="unlockPercent">0%</span>
+                    </div>
+                    <div class="position-control-row">
+                        <input type="range" id="unlockSlider" min="0" max="1280" class="slider" />
+                        <input type="number" id="unlockPos" min="0" max="1280" class="position-input" />
+                    </div>
+                </div>
+                
+                <!-- 锁定位置 -->
+                <div class="servo-position-control">
+                    <div class="position-header">
+                        <label for="lockPos">锁定位置</label>
+                        <span class="position-percent" id="lockPercent">0%</span>
+                    </div>
+                    <div class="position-control-row">
+                        <input type="range" id="lockSlider" min="0" max="1280" class="slider" />
+                        <input type="number" id="lockPos" min="0" max="1280" class="position-input" />
+                    </div>
+                </div>
+            </div>
+            
+            <button onclick="saveConfig()" class="btn btn-primary" style="width: 100%;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                保存配置
+            </button>
+        </div>
+
+        <!-- 返回首页 -->
+        <div style="text-align: center; margin-top: var(--spacing-xl);">
+            <a href="/" class="btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                返回首页
+            </a>
+        </div>
+
+    </div>
+
+    <!-- 日志切换按钮 -->
+    <button id="log-toggle-btn" class="log-toggle-btn" onclick="toggleLogWindow()" aria-label="显示/隐藏日志">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+        </svg>
+        <span class="log-toggle-badge" id="log-toggle-badge" style="display: none;"></span>
+    </button>
+
+    <!-- 日志浮窗 -->
+    <div id="log-float-window" class="log-float-window" style="display: none;">
+        <div class="log-float-header" id="log-float-header">
+            <div class="log-float-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>系统日志</span>
+            </div>
+            <div class="log-float-controls">
+                <button class="log-float-minimize-btn" onclick="minimizeLogWindow()" aria-label="最小化" title="最小化">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+                <button class="log-float-close-btn" onclick="toggleLogWindow()" aria-label="关闭" title="关闭">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="log-float-body" id="log-float-body">
+            <div class="log-float-toolbar">
+                <select id="log-filter" onchange="setLogFilter(this.value)" aria-label="日志级别过滤">
+                    <option value="0">全部</option>
+                    <option value="1">ERROR</option>
+                    <option value="2">WARN+</option>
+                    <option value="3">INFO+</option>
+                    <option value="4">DEBUG+</option>
+                    <option value="5">VERBOSE+</option>
+                </select>
+                <button onclick="clearLogs()" aria-label="清空日志">清空</button>
+            </div>
+            <div id="log-output" class="log-float-output"></div>
+        </div>
+    </div>
+
+    <script src="/web/js/common.js"></script>
+    <script src="/web/js/pages/servo.js"></script>
+</body>
+</html>

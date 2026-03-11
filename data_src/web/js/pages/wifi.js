@@ -6,7 +6,19 @@
 
     // 初始化
     function init() {
-        getWifiStatus();
+        // 等待 WebSocket 连接成功后再获取 WiFi 状态
+        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+            // WebSocket 已经连接，直接获取状态
+            getWifiStatus();
+        } else {
+            // WebSocket 未连接，监听连接成功事件
+            document.addEventListener('ws-connected', function onWsConnected() {
+                getWifiStatus();
+                // 移除监听器，避免重复调用
+                document.removeEventListener('ws-connected', onWsConnected);
+            });
+        }
+        
         initPasswordToggle();
         initKeyboardSupport();
         initPasswordValidation();
@@ -14,27 +26,23 @@
 
     // 获取WiFi状态
     function getWifiStatus() {
-        fetch('/api/wifi')
-            .then(response => response.json())
-            .then(response => {
-                if (response.success && response.data) {
-                    const data = response.data;
-                    const statusDot = document.getElementById('wifiStatusDot');
-                    const statusText = document.getElementById('wifiStatusText');
-                    
-                    if (data.mode === 'AP') {
-                        statusDot.className = 'status-dot connected';
-                        statusText.textContent = 'AP模式: ' + data.ssid;
-                        isAPMode = true;
-                    } else if (data.ssid) {
-                        statusDot.className = 'status-dot connected';
-                        statusText.textContent = '已连接: ' + data.ssid + ' (' + data.ip + ')';
-                        isAPMode = false;
-                    } else {
-                        statusDot.className = 'status-dot';
-                        statusText.textContent = '未连接';
-                        isAPMode = false;
-                    }
+        sendWsRequest('wifi/getInfo')
+            .then(data => {
+                const statusDot = document.getElementById('wifiStatusDot');
+                const statusText = document.getElementById('wifiStatusText');
+                
+                if (data.mode === 'AP') {
+                    statusDot.className = 'status-dot connected';
+                    statusText.textContent = 'AP模式: ' + data.ssid;
+                    isAPMode = true;
+                } else if (data.ssid) {
+                    statusDot.className = 'status-dot connected';
+                    statusText.textContent = '已连接: ' + data.ssid + ' (' + data.ip + ')';
+                    isAPMode = false;
+                } else {
+                    statusDot.className = 'status-dot';
+                    statusText.textContent = '未连接';
+                    isAPMode = false;
                 }
             })
             .catch(error => {
@@ -94,16 +102,56 @@
         // 启动自动刷新
         startAutoRefresh();
         
-        fetch('/api/wifi/scan')
-            .then(response => response.json())
-            .then(response => {
-                if (response.success && response.data) {
-                    displayWifiList(response.data);
-                } else {
-                    wifiList.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">未找到WiFi网络</p>';
+        // 设置超时定时器（35秒）
+        let timeoutTimer = setTimeout(() => {
+            offWsEvent('wifi/scanResult', scanResultHandler);
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                    <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                </svg>
+                扫描WiFi网络
+            `;
+            wifiList.innerHTML = `
+                <p style="text-align: center; color: var(--color-danger);">扫描超时</p>
+                <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
+                    重新扫描
+                </button>
+            `;
+            showToast('扫描超时，请重试', 'error');
+        }, 35000);
+        
+        // 注册扫描结果监听器
+        const scanResultHandler = (message) => {
+            clearTimeout(timeoutTimer);
+            offWsEvent('wifi/scanResult', scanResultHandler);
+            
+            if (message.success && message.data) {
+                displayWifiList(message.data);
+            } else {
+                const errorMessage = message.data?.message || '未找到WiFi网络';
+                wifiList.innerHTML = `
+                    <p style="text-align: center; color: var(--text-secondary);">${escapeHtml(errorMessage)}</p>
+                    <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
+                        重新扫描
+                    </button>
+                `;
+                if (errorMessage !== '未找到WiFi网络') {
+                    showToast('扫描失败：' + errorMessage, 'error');
                 }
-            })
+            }
+        };
+        
+        onWsEvent('wifi/scanResult', scanResultHandler);
+        
+        // 发送扫描请求
+        sendWsRequest('wifi/scan')
             .catch(error => {
+                clearTimeout(timeoutTimer);
+                offWsEvent('wifi/scanResult', scanResultHandler);
                 console.error('扫描WiFi失败:', error);
                 wifiList.innerHTML = `
                     <p style="text-align: center; color: var(--color-danger);">扫描失败</p>
@@ -111,7 +159,7 @@
                         重新扫描
                     </button>
                 `;
-                showToast('扫描失败：' + error, 'error');
+                showToast('扫描失败：' + error.message, 'error');
             })
             .finally(() => {
                 // 恢复扫描按钮
@@ -187,7 +235,8 @@
             }, index * 50);
             
             // 检查是否是当前连接的网络
-            const isConnected = document.getElementById('wifiStatusText').textContent.includes(escapeHtml(network.ssid));
+            const currentStatusText = document.getElementById('wifiStatusText').textContent;
+            const isConnected = currentStatusText.includes(escapeHtml(network.ssid));
             
             div.innerHTML = `
                 <div class="wifi-info">
@@ -288,7 +337,7 @@
             } else {
                 toggle.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11 8z"></path>
                         <circle cx="12" cy="12" r="3"></circle>
                     </svg>
                 `;
@@ -370,76 +419,45 @@
         setButtonLoading(testBtn, true);
         statusText.textContent = '测试连接中...';
         
-        const params = new URLSearchParams({
-            ssid: selectedNetwork.ssid,
-            password: password
-        });
-        
-        // 发送测试请求
-        fetch('/api/wifi/test?' + params.toString(), { method: 'POST' })
-            .catch(error => {
-                console.error('测试请求失败:', error);
-            });
-
-        // 立即开始轮询状态
-        pollTestStatus(passwordInput, 0);
-    }
-    
-    // 轮询测试状态
-    function pollTestStatus(passwordInput, pollCount = 0) {
-        const maxPolls = 60; // 最多轮询60次（约30秒）
-        
-        // 超时检查
-        if (pollCount >= maxPolls) {
-            showToast('测试超时', 'error');
+        // 注册测试结果监听器
+        const testResultHandler = (message) => {
+            offWsEvent('wifi/testResult', testResultHandler);
+            
             const testBtn = document.getElementById('testBtn');
             setButtonLoading(testBtn, false);
-            getWifiStatus();
-            return;
-        }
-        
-        fetch('/api/wifi/test/status')
-            .then(response => response.json())
-            .then(response => {
-                if (response.success && response.data) {
-                    const data = response.data;
-                    const statusText = document.getElementById('wifiStatusText');
-                    const testBtn = document.getElementById('testBtn');
-                    
-                    if (!data.running) {
-                        // 测试已完成
-                        setButtonLoading(testBtn, false);
-                        
-                        if (data.success) {
-                            showToast('连接成功！IP: ' + data.ip, 'success');
-                            statusText.textContent = '连接成功: ' + data.ip;
-                            setTimeout(() => {
-                                getWifiStatus();
-                            }, 2000);
-                        } else {
-                            showToast('连接失败: ' + (data.errorMessage || '未知错误'), 'error');
-                            statusText.textContent = '连接失败';
-                            passwordInput.classList.add('input-error');
-                            setTimeout(() => {
-                                getWifiStatus();
-                            }, 2000);
-                        }
-                    } else {
-                        // 测试仍在进行中，继续轮询
-                        statusText.textContent = '测试连接中...';
-                        setTimeout(() => {
-                            pollTestStatus(passwordInput, pollCount + 1);
-                        }, 500);
-                    }
+            
+            if (message.success && message.data) {
+                const data = message.data;
+                if (data.success) {
+                    showToast('连接成功！IP: ' + data.ip, 'success');
+                    statusText.textContent = '连接成功: ' + data.ip;
+                    setTimeout(() => {
+                        getWifiStatus();
+                    }, 2000);
+                } else {
+                    showToast('连接失败: ' + (data.errorMessage || '未知错误'), 'error');
+                    statusText.textContent = '连接失败';
+                    passwordInput.classList.add('input-error');
+                    setTimeout(() => {
+                        getWifiStatus();
+                    }, 2000);
                 }
-            })
-            .catch(error => {
-                console.error('获取测试状态失败:', error);
-                // 出错后继续轮询
-                setTimeout(() => {
-                    pollTestStatus(passwordInput, pollCount + 1);
-                }, 500);
-            });
+            }
+        };
+        
+        onWsEvent('wifi/testResult', testResultHandler);
+        
+        // 发送测试请求
+        sendWsRequest('wifi/test', {
+            ssid: selectedNetwork.ssid,
+            password: password
+        }).catch(error => {
+            offWsEvent('wifi/testResult', testResultHandler);
+            console.error('测试请求失败:', error);
+            const testBtn = document.getElementById('testBtn');
+            setButtonLoading(testBtn, false);
+            showToast('测试失败：' + error.message, 'error');
+        });
     }
 
     // 保存配置
@@ -468,30 +486,22 @@
                 const saveBtn = document.getElementById('saveBtn');
                 setButtonLoading(saveBtn, true);
                 
-                const params = new URLSearchParams({
+                sendWsRequest('wifi/saveConfig', {
                     ssid: selectedNetwork.ssid,
                     password: password
+                })
+                .then(() => {
+                    showToast('配置保存成功', 'success');
+                    stopAutoRefresh();
+                    setTimeout(() => {
+                        location.reload();
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('保存配置失败:', error);
+                    showToast('保存失败：' + error.message, 'error');
+                    setButtonLoading(saveBtn, false);
                 });
-                
-                fetch('/api/wifi/config?' + params.toString(), { method: 'POST' })
-                    .then(response => response.json())
-                    .then(response => {
-                        if (response.success) {
-                            showToast('配置保存成功', 'success');
-                            stopAutoRefresh();
-                            setTimeout(() => {
-                                location.reload();
-                            }, 3000);
-                        } else {
-                            showToast('保存失败: ' + response.message, 'error');
-                            setButtonLoading(saveBtn, false);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('保存配置失败:', error);
-                        showToast('保存失败：' + error, 'error');
-                        setButtonLoading(saveBtn, false);
-                    });
             }
         });
     }
@@ -506,25 +516,19 @@
                 const clearBtn = document.getElementById('clearBtn');
                 setButtonLoading(clearBtn, true);
                 
-                fetch('/api/wifi/config', { method: 'DELETE' })
-                    .then(response => response.json())
-                    .then(response => {
-                        if (response.success) {
-                            showToast('配置已清除', 'info');
-                            stopAutoRefresh();
-                            setTimeout(() => {
-                                location.reload();
-                            }, 3000);
-                        } else {
-                            showToast('清除失败: ' + response.message, 'error');
-                            setButtonLoading(clearBtn, false);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('清除配置失败:', error);
-                        showToast('清除失败：' + error, 'error');
-                        setButtonLoading(clearBtn, false);
-                    });
+                sendWsRequest('wifi/clearConfig')
+                .then(() => {
+                    showToast('配置已清除', 'info');
+                    stopAutoRefresh();
+                    setTimeout(() => {
+                        location.reload();
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('清除配置失败:', error);
+                    showToast('清除失败：' + error.message, 'error');
+                    setButtonLoading(clearBtn, false);
+                });
             }
         });
     }

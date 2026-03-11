@@ -2,24 +2,37 @@
 (function() {
     // 页面加载时获取系统信息
     function init() {
-        loadSystemInfo();
+        // 等待 WebSocket 连接成功后再获取系统信息
+        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+            // WebSocket 已经连接，直接获取信息
+            loadSystemInfo();
+        } else {
+            // WebSocket 未连接，监听连接成功事件
+            document.addEventListener('ws-connected', function onWsConnected() {
+                loadSystemInfo();
+                // 移除监听器，避免重复调用
+                document.removeEventListener('ws-connected', onWsConnected);
+            });
+        }
     }
 
-    // 获取WiFi信息
+    // 获取系统信息
     function loadSystemInfo() {
         // 获取WiFi信息
-        fetch('/api/wifi')
-            .then(response => response.json())
-            .then(response => {
-                if (response.success && response.data) {
-                    document.getElementById('wifi').innerHTML = response.data.ssid + ' (' + response.data.ip + ')';
+        sendWsRequest('wifi/getInfo')
+            .then(data => {
+                const wifiEl = document.getElementById('wifi');
+                if (data.mode === 'AP') {
+                    wifiEl.textContent = 'AP模式: ' + data.ssid;
+                } else if (data.ssid) {
+                    wifiEl.textContent = data.ssid + ' (' + data.ip + ')';
                 } else {
-                    document.getElementById('wifi').innerHTML = '获取失败';
+                    wifiEl.textContent = '未连接';
                 }
             })
             .catch(error => {
                 console.error('获取WiFi信息失败:', error);
-                document.getElementById('wifi').innerHTML = '获取失败';
+                document.getElementById('wifi').textContent = '获取失败';
             });
 
         // 获取电池电压
