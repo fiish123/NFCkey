@@ -11,7 +11,7 @@ extern const int loglevel;
 #define LOG_W(...) logMessage(1, "WARN", __VA_ARGS__)
 #define LOG_I(...) logMessage(2, "INFO", __VA_ARGS__)
 #define LOG_D(...) logMessage(3, "DEBUG", __VA_ARGS__)
-#define LOG_V(...) logMessage(4, "V", __VA_ARGS__)
+#define LOG_V(...) logMessage(4, "VERBOSE", __VA_ARGS__)
 
 // 日志输出函数
 void logMessage(const int level, const char *tag, const char *format, ...);

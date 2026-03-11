@@ -84,7 +84,7 @@ const int loglevel = 2;
 #define LOG_W(...) logMessage(1, "WARN", __VA_ARGS__)
 #define LOG_I(...) logMessage(2, "INFO", __VA_ARGS__)
 #define LOG_D(...) logMessage(3, "DEBUG", __VA_ARGS__)
-#define LOG_V(...) logMessage(4, "V", __VA_ARGS__)
+#define LOG_V(...) logMessage(4, "VERBOSE", __VA_ARGS__)
 void logMessage(const int level, const char *tag, const char *format, ...)
 {
 
@@ -117,7 +117,7 @@ void powermanager(u8_t pin, bool on)
   {
     if (on && !isdac_used)
     {
-      LOG_D("DAC启用");
+      LOG_D("DAC音频模块启用");
       isdac_used = true;
       gpio_hold_dis((gpio_num_t)DAC_EN);
       digitalWrite(DAC_EN, HIGH);
@@ -125,7 +125,7 @@ void powermanager(u8_t pin, bool on)
     }
     else if (!on && isdac_used)
     {
-      LOG_D("DAC禁用");
+      LOG_D("DAC音频模块禁用");
       isdac_used = false;
       gpio_hold_dis((gpio_num_t)DAC_EN);
       digitalWrite(DAC_EN, LOW);
@@ -136,12 +136,12 @@ void powermanager(u8_t pin, bool on)
   {
     if (on && !isservo_used)
     {
-      LOG_D("舵机启用");
+      LOG_D("舵机模块启用");
       isservo_used = true;
     }
     else if (!on && isservo_used)
     {
-      LOG_D("舵机禁用");
+      LOG_D("舵机模块禁用");
       isservo_used = false;
     }
   }
@@ -153,7 +153,7 @@ void powermanager(u8_t pin, bool on)
 
   if (on && !is5v_on)
   {
-    LOG_D("5V电源开");
+    LOG_D("5V电源开启");
     is5v_on = true;
     gpio_hold_dis((gpio_num_t)EN_5V);
     digitalWrite(EN_5V, HIGH);
@@ -161,7 +161,7 @@ void powermanager(u8_t pin, bool on)
   }
   else if (!on && is5v_on)
   {
-    LOG_D("5V电源关");
+    LOG_D("5V电源关闭");
     is5v_on = false;
     gpio_hold_dis((gpio_num_t)EN_5V);
     digitalWrite(EN_5V, LOW);
@@ -182,7 +182,7 @@ void switchconnect(uint8_t in)
 
   if (in == 1)
   {
-    LOG_D("切换至读卡器通信");
+    LOG_D("串口切换至读卡器模式 (9600 baud)");
     Serial1.end();
     vTaskDelay(pdMS_TO_TICKS(10));
     Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
@@ -190,7 +190,7 @@ void switchconnect(uint8_t in)
   }
   else
   {
-    LOG_D("切换至舵机通信");
+    LOG_D("串口切换至舵机模式 (115200 baud)");
     powermanager(2, true);
     Serial1.end();
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -259,7 +259,7 @@ void playAudio(unsigned int in)
   // 播放音频文件（阻塞直到完成）
   player1.playPath(audioPath);
 
-  LOG_I("播放音频: %s", audioPath);
+  LOG_I("音频播放: %s", audioPath);
 }
 // 播放线程状态标记
 TaskHandle_t playerListHandle = NULL;
@@ -276,13 +276,13 @@ void playerList(void *parameter)
       isplaying = true;
       playAudio(playlist[playlistindex]);
       playlistindex++;
-      LOG_D("播放列表 %d/%d", playlistindex, playlistcount);
+      LOG_D("播放队列进度: %d/%d", playlistindex, playlistcount);
     }
 
     if (isplaying)
     {
       powermanager(1, false);
-      LOG_I("播放任务完成~");
+      LOG_I("音频队列播放完成");
       playlistcount = 0;
       playlistindex = 0;
       isplaying = false;
@@ -307,7 +307,7 @@ void loadServoConfig()
   lockPosition = servoPreferences.getUShort(PREF_LOCK_POS, 1180);
   servoPreferences.end();
 
-  LOG_I("舵机配置加载 - 解锁: %d, 锁定: %d", unlockPosition, lockPosition);
+  LOG_I("舵机配置加载成功: 解锁位置=%d, 锁定位置=%d", unlockPosition, lockPosition);
 }
 
 // 保存舵机配置
@@ -327,7 +327,7 @@ void saveServoConfig(uint16_t unlock, uint16_t lock)
   unlockPosition = unlock;
   lockPosition = lock;
 
-  LOG_I("舵机配置已保存 - 解锁: %d, 锁定: %d", unlockPosition, lockPosition);
+  LOG_I("舵机配置已保存: 解锁位置=%d, 锁定位置=%d", unlockPosition, lockPosition);
 }
 
 // 获取舵机配置
@@ -417,7 +417,7 @@ void Switchlock()
   sendServoPosition(lockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
-  LOG_D("舵机完成动作");
+  LOG_D("舵机动作执行完成");
 
   isservobusy = false;
 }
@@ -431,7 +431,7 @@ void executeUnlock()
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
-  LOG_I("Web控制: 舵机解锁");
+  LOG_I("API调用: 舵机解锁");
 }
 
 // 执行锁定动作（供Web调用）
@@ -443,7 +443,7 @@ void executeLock()
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
-  LOG_I("Web控制: 舵机锁定");
+  LOG_I("API调用: 舵机锁定");
 }
 
 // 执行任意动作
@@ -455,7 +455,7 @@ void executePosition(uint16_t position)
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
-  LOG_I("Web控制: 舵机位置%d", position);
+  LOG_I("API调用: 舵机移动至位置 %d", position);
 }
 
 // NFC标签结构体
@@ -475,11 +475,11 @@ const char *CARDS_FILE_PATH = "/cards.json";
 // 从文件加载卡片数据
 void loadCardsDataFromFile()
 {
-  LOG_I("加载卡片数据...");
+  LOG_I("开始加载授权卡片数据");
 
   if (!LittleFS.exists(CARDS_FILE_PATH))
   {
-    LOG_W("卡片文件不存在，创建空卡片文件");
+    LOG_I("卡片配置文件不存在，创建默认文件");
 
     // 创建空卡片数据
     JsonDocument doc;
@@ -489,21 +489,21 @@ void loadCardsDataFromFile()
     File file = LittleFS.open(CARDS_FILE_PATH, "w");
     if (!file)
     {
-      LOG_E("无法创建卡片文件");
+      LOG_E("创建卡片配置文件失败");
       return;
     }
 
     serializeJson(doc, file);
     file.close();
 
-    LOG_I("空卡片文件已创建");
+    LOG_I("卡片配置文件创建成功");
   }
 
   // 读取文件
   File file = LittleFS.open(CARDS_FILE_PATH, "r");
   if (!file)
   {
-    LOG_E("无法打开卡片文件");
+    LOG_E("打开卡片配置文件失败");
     return;
   }
 
@@ -513,7 +513,7 @@ void loadCardsDataFromFile()
 
   if (error)
   {
-    LOG_E("JSON解析失败: %s", error.c_str());
+    LOG_E("卡片配置JSON解析失败: %s", error.c_str());
     return;
   }
 
@@ -542,7 +542,7 @@ void loadCardsDataFromFile()
     }
   }
 
-  LOG_I("卡片数据加载完成，共 %d 张卡", authorizedCards.size());
+  LOG_I("授权卡片加载完成: %d 张", authorizedCards.size());
 }
 
 // 保存卡片数据到文件
@@ -566,14 +566,14 @@ bool saveCardsToFile()
   File file = LittleFS.open(CARDS_FILE_PATH, "w");
   if (!file)
   {
-    LOG_E("无法打开卡片文件进行写入");
+    LOG_E("打开卡片配置文件失败");
     return false;
   }
 
   serializeJson(doc, file);
   file.close();
 
-  LOG_I("卡片数据已保存");
+  LOG_I("授权卡片数据保存成功");
   return true;
 }
 
@@ -626,7 +626,7 @@ NFCcard ReadCard()
   // 超时检查：如果已经开始接收帧但超过设定时间没有收到完整数据，则重置状态
   if (frameStarted && (millis() - lastReceiveTime > TIMEOUT_MS))
   {
-    LOG_V("接收超时，重置接收状态");
+    LOG_V("串口接收超时，重置缓冲区");
     frameStarted = false;
     bufferIndex = 0;
     return readdata;
@@ -637,7 +637,7 @@ NFCcard ReadCard()
     uint8_t incomingByte = Serial1.read();
     lastReceiveTime = millis(); // 更新最后接收时间
 
-    LOG_V("收到字节: 0x%X", incomingByte);
+    LOG_V("串口接收字节: 0x%02X", incomingByte);
 
     // 寻找帧起始符 0x20
     if (!frameStarted && incomingByte == 0x20)
@@ -661,7 +661,7 @@ NFCcard ReadCard()
         if (rxBuffer[0] != 0x20 || rxBuffer[13] != 0x03)
         {
 
-          LOG_V("帧结构错误: 起始符或结束符不正确");
+          LOG_V("数据帧格式错误: 起始=0x%X, 结束=0x%X", rxBuffer[0], rxBuffer[13]);
           LOG_V("起始符: 0x%X, 结束符: 0x%X", rxBuffer[0], rxBuffer[13]);
 
           frameStarted = false;
@@ -680,7 +680,7 @@ NFCcard ReadCard()
 
         if (checksum != rxBuffer[12])
         {
-          LOG_V("校验和错误");
+          LOG_V("数据帧校验失败");
           frameStarted = false;
           bufferIndex = 0;
           readdata.uidLength = 0;
@@ -698,7 +698,7 @@ NFCcard ReadCard()
         char serialStr[9];
         sprintf(serialStr, "%02X%02X%02X%02X", readdata.uid[0], readdata.uid[1], readdata.uid[2], readdata.uid[3]);
 
-        LOG_V("卡片序列号: %s", serialStr);
+        LOG_V("读取到卡片UID: %s", serialStr);
 
         frameStarted = false;
         bufferIndex = 0;
@@ -708,7 +708,7 @@ NFCcard ReadCard()
       // 防止缓冲区溢出
       if (bufferIndex >= sizeof(rxBuffer))
       {
-        LOG_V("缓冲区溢出，重置接收状态");
+        LOG_V("数据缓冲区溢出，重置接收状态");
         frameStarted = false;
         bufferIndex = 0;
         readdata.uidLength = 0;
@@ -750,7 +750,7 @@ void sendCardSearchCommand()
     vTaskDelay(pdMS_TO_TICKS(1));
     now = millis();
   }
-  LOG_V("读卡耗时 %dms ", now - last);
+  LOG_V("读卡操作耗时: %lu ms", now - last);
 }
 
 void setup()
@@ -801,7 +801,7 @@ void setup()
   // 初始化播放器
   while (!LittleFS.begin())
   {
-    LOG_E("LittleFS 挂载失败");
+    LOG_E("LittleFS文件系统挂载失败");
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
@@ -838,7 +838,7 @@ void setup()
 
   vTaskDelay(pdMS_TO_TICKS(1000));
 
-  LOG_I("初始化完成");
+  LOG_I("系统初始化完成");
 
   // leds[0] = CRGB::Black;
   // FastLED.show();
@@ -856,7 +856,7 @@ void loop()
   if (!isWebServerRunning())
   {
     // 进入浅睡眠
-    LOG_I("进入浅睡眠");
+    LOG_I("进入Light Sleep休眠模式");
     powermanager(1, false);
     powermanager(2, false);
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -870,7 +870,7 @@ void loop()
     // 检查是否超过30分钟自动重启
     if (millis() - webServerStartTime >= WEB_SERVER_RESTART_INTERVAL)
     {
-      LOG_I("Web服务器运行超过30分钟，自动重启系统");
+      LOG_I("Web服务器运行超时(30min)，系统即将重启");
       vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
@@ -882,7 +882,7 @@ void loop()
     return;
   }
 
-  LOG_I("已唤醒");
+  LOG_I("检测到卡片触发，系统唤醒");
   vTaskDelay(pdMS_TO_TICKS(10));
 
   // au:wait
@@ -894,7 +894,7 @@ void loop()
   // 检查 UART1 是否有数据可读
   if (Serial1.available() > 0)
   {
-    LOG_I("检测到卡");
+    LOG_I("读卡器检测到NFC卡片");
 
     // 读取标签
     NFCcard currentcard;
@@ -906,7 +906,7 @@ void loop()
       if (isCardAuthorized(currentcard))
       {
         // 匹配
-        LOG_I("卡授权");
+        LOG_I("卡片验证通过，执行解锁动作");
 
         // leds[0] = CRGB::Green;
         // FastLED.show();
@@ -922,7 +922,7 @@ void loop()
         // 不匹配
         // leds[0] = CRGB::Red;
         // FastLED.show();
-        LOG_I("卡拒绝");
+    LOG_I("卡片验证失败，拒绝访问");
 
         // au:denied
         addTolist(4);
@@ -937,7 +937,7 @@ void loop()
       // au:readerror
       addTolist(5);
 
-      LOG_W("卡数据异常");
+      LOG_W("卡片数据读取异常");
 
       vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -956,10 +956,10 @@ void loop()
 
   // 低电量提醒
   float voltage = read_battery_voltage();
-  LOG_I("电池电压: %f", voltage);
+  LOG_D("电池电压: %.2f V", voltage);
   if (voltage <= 3.4 and voltage > 3.2)
   {
-    LOG_W("电量低");
+    LOG_W("电池电量低: %.2f V", voltage);
     // leds[0] = CRGB::Red;
     // au:lowbat
     addTolist(6);
@@ -968,7 +968,7 @@ void loop()
   }
   else if (voltage <= 3.2)
   {
-    LOG_E("电量极低");
+    LOG_W("电池电量极低: %.2f V", voltage);
     // leds[0] = CRGB::Red;
     // au:lowlowbat
     addTolist(7);
@@ -999,18 +999,18 @@ void loop()
       if (isCardAuthorized(currentcard))
       {
         // 匹配
-        LOG_I("卡授权");
+        LOG_I("卡片验证通过");
         consecutiveCardCount++;
       }
       else
       {
-        LOG_I("卡拒绝");
+        LOG_D("卡片验证失败");
         consecutiveCardCount = 0;
       }
     }
     else
     {
-      LOG_W("卡数据异常");
+      LOG_W("卡片数据读取异常");
       consecutiveCardCount = 0;
     }
     vTaskDelay(pdMS_TO_TICKS(1000));

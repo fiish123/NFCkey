@@ -175,11 +175,11 @@ bool loadWifiConfig(String &ssid, String &password)
 
     if (ssid.length() == 0 || password.length() == 0)
     {
-        LOG_D("WiFi配置为空");
+        LOG_D("WiFi配置未保存，配置为空");
         return false;
     }
 
-    LOG_D("WiFi配置加载成功: %s", ssid.c_str());
+    LOG_I("WiFi配置读取成功: SSID=%s", ssid.c_str());
     return true;
 }
 
@@ -193,7 +193,7 @@ bool saveWifiConfig(const String &ssid, const String &password)
 {
     if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 63)
     {
-        LOG_E("WiFi配置参数无效");
+        LOG_E("WiFi配置参数无效: SSID长度=%d, 密码长度=%d", ssid.length(), password.length());
         return false;
     }
 
@@ -204,11 +204,11 @@ bool saveWifiConfig(const String &ssid, const String &password)
 
     if (ssidOk && passOk)
     {
-        LOG_I("WiFi配置保存成功: %s", ssid.c_str());
+        LOG_I("WiFi配置已保存: SSID=%s", ssid.c_str());
         return true;
     }
 
-    LOG_E("WiFi配置保存失败");
+    LOG_E("WiFi配置保存失败: Preferences写入错误");
     return false;
 }
 
@@ -229,7 +229,7 @@ bool clearWifiConfig()
         return true;
     }
 
-    LOG_E("WiFi配置清除失败");
+    LOG_E("WiFi配置清除失败: Preferences删除错误");
     return false;
 }
 
@@ -238,12 +238,12 @@ bool clearWifiConfig()
  */
 void startAPMode()
 {
-    LOG_I("启动AP模式: %s", AP_SSID);
+    LOG_I("启动AP热点模式: SSID=%s", AP_SSID);
 
     WiFi.mode(WIFI_MODE_APSTA);
     WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, AP_HIDDEN, AP_MAX_CONNECTION);
 
-    LOG_I("AP模式启动成功，IP: %s", WiFi.softAPIP().toString().c_str());
+    LOG_I("AP热点启动成功: IP=%s", WiFi.softAPIP().toString().c_str());
     LOG_I("密码: %s", AP_PASSWORD);
 }
 
@@ -339,7 +339,7 @@ static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocume
  */
 static void sendErrorResponse(AsyncWebServerRequest *request, int code, const String &message)
 {
-    LOG_E("API错误响应: %d - %s", code, message.c_str());
+        LOG_E("API错误响应: HTTP %d - %s", code, message.c_str());
     ApiResponse response;
     response.success = false;
     response.code = code;
@@ -585,7 +585,7 @@ void wifiScanTask(void *pvParameters)
 
     if (!sent)
     {
-        LOG_W("WiFi扫描完成但没有客户端连接，结果未发送");
+        LOG_W("WiFi扫描完成但无WebSocket客户端连接，结果未发送");
     }
 
     wifiScanRunning = false;
@@ -673,18 +673,18 @@ void wifiTestTask(void *pvParameters)
     // 断开当前连接
     WiFi.disconnect(true);
 
-    LOG_I("连接WiFi: %s", ssid.c_str());
+    LOG_I("开始连接WiFi: SSID=%s", ssid.c_str());
     bool wifisuccess = false;
     String errorMessage = "";
 
     if (connectToWiFi(ssid, password, 20))
     {
-        LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+        LOG_I("WiFi连接成功: IP=%s", WiFi.localIP().toString().c_str());
         wifisuccess = true;
     }
     else
     {
-        LOG_W("WiFi连接失败");
+        LOG_D("WiFi连接失败: 错误码=%d, %s", WiFi.status(), errorMessage.c_str());
         WiFi.disconnect(true);
         switch (WiFi.status())
         {
@@ -718,11 +718,11 @@ void wifiTestTask(void *pvParameters)
     // 恢复原始连接
     if (originalmode == 1 || originalmode == 3)
     {
-        LOG_I("恢复原始WiFi: %s", originalSSID.c_str());
+        LOG_I("恢复原WiFi连接: SSID=%s", originalSSID.c_str());
         connectToWiFi(originalSSID, originalPassword, 20);
         if (WiFi.status() != WL_CONNECTED)
         {
-            LOG_E("恢复失败，启动AP模式");
+            LOG_E("恢复WiFi失败，切换至AP模式");
             startAPMode();
         }
     }
@@ -752,7 +752,7 @@ void wifiTestTask(void *pvParameters)
 
     if (!sent)
     {
-        LOG_W("WiFi测试完成但没有客户端连接，结果未发送");
+        LOG_W("WiFi连接测试完成但无WebSocket客户端连接，结果未发送");
     }
 
     wifiTestRunning = false;
@@ -845,7 +845,7 @@ void initWebSocket()
         switch (type) {
             case WS_EVT_CONNECT:
             {
-                LOG_D("WebSocket 客户端连接: %u", client->id());
+                LOG_D("WebSocket客户端连接: ID=%u", client->id());
                 // 发送缓存的日志给新连接的客户端（批量发送）
                 JsonDocument doc;
                 JsonArray logsArray = doc.to<JsonArray>();
@@ -865,7 +865,7 @@ void initWebSocket()
             }
             case WS_EVT_DISCONNECT:
             {
-                LOG_D("WebSocket 客户端断开: %u", client->id());
+                LOG_D("WebSocket客户端断开: ID=%u", client->id());
                 break;
             }
             case WS_EVT_DATA:
@@ -873,7 +873,7 @@ void initWebSocket()
                 AwsFrameInfo *info = (AwsFrameInfo*)arg;
                 if (info->opcode == WS_TEXT) {
                     String msg = String((char*)data, len);
-                    LOG_D("WebSocket 收到消息: %s", msg.c_str());
+                    LOG_D("WebSocket收到消息: %s", msg.c_str());
 
                     JsonDocument req;
                     DeserializationError error = deserializeJson(req, msg);
@@ -883,7 +883,7 @@ void initWebSocket()
                     }
 
                     if (!req["action"].is<const char*>()) {
-                        LOG_W("消息缺少action字段");
+                        LOG_W("WebSocket消息缺少action字段");
                         return;
                     }
 
@@ -902,21 +902,21 @@ void initWebSocket()
                     } else if (action == "wifi/testStatus") {
                         handleWsWifiTestStatus(client, req);
                     } else {
-                        LOG_W("未知的action: %s", action.c_str());
+                        LOG_W("未知的WebSocket action: %s", action.c_str());
                     }
                 }
                 break;
             }
             case WS_EVT_ERROR:
             {
-                LOG_E("WebSocket 错误: %u", client->id());
+                LOG_E("WebSocket错误: 客户端ID=%u, 错误码=%u", client->id(), type);
                 break;
             }
             case WS_EVT_PONG:
                 break;
         } });
 
-    LOG_I("WebSocket 服务器初始化完成");
+    LOG_I("WebSocket服务器初始化完成: 路径=/ws");
 }
 
 /**
@@ -930,7 +930,7 @@ void cleanupWebSocket()
         delete ws;
         ws = nullptr;
         logCache.clear();
-        LOG_I("WebSocket 服务器已清理");
+        LOG_I("WebSocket服务器已清理，断开所有客户端");
     }
 }
 
@@ -943,7 +943,7 @@ void cleanupWebSocket()
  */
 void handleGetBatteryInfo(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/battery 请求");
+    LOG_D("HTTP GET /api/battery");
     float voltage = read_battery_voltage();
     JsonDocument doc;
     doc["voltage"] = round(voltage * 100) / 100;
@@ -956,7 +956,7 @@ void handleGetBatteryInfo(AsyncWebServerRequest *request)
  */
 void handleGetSystemInfo(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/system/info 请求");
+    LOG_D("HTTP GET /api/system/info");
     JsonDocument doc;
     doc["chipModel"] = ESP.getChipModel();
     uint64_t chipId = ESP.getEfuseMac();
@@ -972,7 +972,7 @@ void handleGetSystemInfo(AsyncWebServerRequest *request)
  */
 void handleGetFileSystemInfo(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/filesystem 请求");
+    LOG_D("HTTP GET /api/filesystem");
     uint64_t totalBytes = LittleFS.totalBytes();
     uint64_t usedBytes = LittleFS.usedBytes();
     uint64_t freeBytes = totalBytes - usedBytes;
@@ -1002,7 +1002,7 @@ void handleListFiles(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "无效路径");
         return;
     }
-    LOG_D("GET /api/files 请求，路径: %s", path.c_str());
+    LOG_D("HTTP GET /api/files?path=%s", path.c_str());
 
     File dir = LittleFS.open(path);
     if (!dir || !dir.isDirectory())
@@ -1040,7 +1040,7 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "无效路径");
         return;
     }
-    LOG_D("POST /api/directories 请求，路径: %s", path.c_str());
+    LOG_D("HTTP POST /api/directories?path=%s", path.c_str());
 
     if (LittleFS.mkdir(path))
     {
@@ -1066,12 +1066,12 @@ void handleDeleteResource(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "无效路径");
         return;
     }
-    LOG_D("DELETE /api/files 请求，路径: %s", path.c_str());
+    LOG_D("HTTP DELETE /api/files?path=%s", path.c_str());
 
     File f = LittleFS.open(path);
     if (!f)
     {
-        LOG_E("删除失败: 路径不存在: %s", path.c_str());
+        LOG_E("文件删除失败: 路径不存在: %s", path.c_str());
         sendErrorResponse(request, 404, "未找到");
         return;
     }
@@ -1087,7 +1087,7 @@ void handleDeleteResource(AsyncWebServerRequest *request)
         {
             entry.close();
             dir.close();
-            LOG_E("删除失败: 目录非空: %s", path.c_str());
+            LOG_E("目录删除失败: 目录非空: %s", path.c_str());
             sendErrorResponse(request, 409, "目录非空");
             return;
         }
@@ -1102,7 +1102,7 @@ void handleDeleteResource(AsyncWebServerRequest *request)
     }
     else
     {
-        LOG_E("删除失败: %s", path.c_str());
+        LOG_E("删除操作失败: %s", path.c_str());
         sendErrorResponse(request, 500, "删除失败");
     }
 }
@@ -1116,7 +1116,7 @@ void handleDownloadFile(AsyncWebServerRequest *request)
     String path;
     if (!getPathParam(request, "path", false, "/", path))
     {
-        LOG_D("GET /api/files/download 请求，无效路径");
+        LOG_D("HTTP GET /api/files/download 无效路径");
         sendErrorResponse(request, 400, "无效路径");
         return;
     }
@@ -1129,11 +1129,11 @@ void handleDownloadFile(AsyncWebServerRequest *request)
             file.close();
         if (!file)
         {
-            LOG_E("下载失败: 文件不存在: %s", path.c_str());
+            LOG_E("文件下载失败: 文件不存在: %s", path.c_str());
         }
         else
         {
-            LOG_E("下载失败: 路径不是文件: %s", path.c_str());
+            LOG_E("文件下载失败: 路径不是文件: %s", path.c_str());
         }
         sendErrorResponse(request, !file ? 404 : 400,
                           !file ? "文件未找到" : "路径不是文件");
@@ -1171,12 +1171,12 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
             uploadState.path += "/";
 
         String fullPath = normalizePath(uploadState.path + filename);
-        LOG_I("开始上传: %s", fullPath.c_str());
+        LOG_I("文件上传开始: %s (Content-Length: %u bytes)", fullPath.c_str(), request->contentLength());
 
         uint64_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
         if (request->contentLength() > freeBytes)
         {
-            LOG_W("空间不足，拒绝上传");
+        LOG_W("文件上传被拒绝: 存储空间不足 (需要: %u, 可用: %u bytes)", request->contentLength(), freeBytes);
             uploadState.error = true;
             uploadState.reset();
             return;
@@ -1185,7 +1185,7 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         uploadState.file = LittleFS.open(fullPath, "w");
         if (!uploadState.file)
         {
-            LOG_E("无法创建文件");
+            LOG_E("文件上传失败: 无法创建文件: %s", fullPath.c_str());
             uploadState.error = true;
             uploadState.reset();
             return;
@@ -1197,7 +1197,7 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         size_t written = uploadState.file.write(data, len);
         if (written != len)
         {
-            LOG_E("写入失败，回滚删除");
+            LOG_E("文件上传失败: 写入错误，已删除临时文件");
             uploadState.file.close();
             String fullPath = normalizePath(uploadState.path + filename);
             LittleFS.remove(fullPath);
@@ -1228,7 +1228,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
     }
     else if (uploadState.active)
     {
-        LOG_I("上传完成: 大小 %u 字节", uploadsize);
+        LOG_I("文件上传完成: %u bytes", uploadsize);
 
         sendSuccessResponse(request);
     }
@@ -1245,7 +1245,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
  */
 void handleGetServoConfig(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/servo/config 请求");
+    LOG_D("HTTP GET /api/servo/config");
     uint16_t unlock, lock;
     getServoConfig(unlock, lock);
     JsonDocument doc;
@@ -1262,7 +1262,7 @@ void handleServoUnlock(AsyncWebServerRequest *request)
     LOG_D("POST /api/servo/actions/unlock 请求");
     if (isservobusy)
     {
-        LOG_W("解锁失败: 舵机忙碌");
+        LOG_W("舵机解锁失败: 舵机忙碌");
         sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
@@ -1278,7 +1278,7 @@ void handleServoLock(AsyncWebServerRequest *request)
     LOG_D("POST /api/servo/actions/lock 请求");
     if (isservobusy)
     {
-        LOG_W("锁定失败: 舵机忙碌");
+        LOG_W("舵机锁定失败: 舵机忙碌");
         sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
@@ -1296,7 +1296,7 @@ static void handleServoPosition(AsyncWebServerRequest *request, uint8_t *data,
 
     if (isservobusy)
     {
-        LOG_W("执行失败: 舵机忙碌");
+        LOG_W("舵机位置控制失败: 舵机忙碌");
         sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
@@ -1336,7 +1336,7 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
                                  size_t len, size_t index, size_t total)
 {
     if (index == 0)
-        LOG_D("PUT /api/servo/config 请求体大小: %d", total);
+        LOG_D("HTTP PUT /api/servo/config 请求体大小: %d bytes", total);
 
     handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
                    {
@@ -1356,7 +1356,7 @@ static void handlePutServoConfig(AsyncWebServerRequest *request, uint8_t *data,
         }
 
         saveServoConfig(unlock, lock);
-        LOG_I("舵机配置更新: 解锁=%d, 锁定=%d", unlock, lock);
+        LOG_I("舵机配置已更新: 解锁=%d, 锁定=%d", unlock, lock);
         sendSuccessResponse(req); });
 }
 
@@ -1385,10 +1385,10 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
 {
     if (!index)
     {
-        LOG_I("开始OTA: %s, 大小: %u", filename.c_str(), request->contentLength());
+        LOG_I("OTA固件更新开始: %s (大小: %u bytes)", filename.c_str(), request->contentLength());
         if (!validateOtaFileSize(request->contentLength()))
         {
-            LOG_E("固件过大");
+            LOG_E("OTA更新失败: 固件大小超限 (最大2MB)");
             Update.abort();
             return;
         }
@@ -1399,7 +1399,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
             return;
         }
         Update.onProgress([](size_t progress, size_t total)
-                          { LOG_D("OTA进度: %u%%", (progress * 100) / total); });
+                          { LOG_D("OTA更新进度: %u%%", (progress * 100) / total); });
     }
 
     if (Update.write(data, len) != len)
@@ -1412,7 +1412,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
     if (final)
     {
         if (Update.end(true))
-            LOG_I("OTA成功，即将重启");
+            LOG_I("OTA固件更新成功，系统即将重启");
         else
         {
             Update.printError(Serial);
@@ -1447,7 +1447,7 @@ void handleOtaUpdateComplete(AsyncWebServerRequest *request)
  */
 void handleGetCardsList(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/cards 请求");
+    LOG_D("HTTP GET /api/cards");
 
     JsonDocument doc;
     JsonArray cardsArray = doc["cards"].to<JsonArray>();
@@ -1464,7 +1464,7 @@ void handleGetCardsList(AsyncWebServerRequest *request)
     }
 
     sendSuccessResponse(request, doc);
-    LOG_D("返回卡片列表，共 %d 张", authorizedCards.size());
+    LOG_D("卡片列表查询完成: 共%d张", authorizedCards.size());
 }
 
 /**
@@ -1473,7 +1473,7 @@ void handleGetCardsList(AsyncWebServerRequest *request)
 void handleAddCard(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
 {
     if (index == 0)
-        LOG_D("POST /api/cards 请求体大小: %d", total);
+        LOG_D("HTTP POST /api/cards 请求体大小: %d bytes", total);
 
     handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
                    {
@@ -1533,7 +1533,7 @@ void handleAddCard(AsyncWebServerRequest *request, uint8_t *data, size_t len, si
 
         if (saveCardsToFile())
         {
-            LOG_I("卡片添加成功: UID=%s, 名称=%s", uid.c_str(), name.c_str());
+            LOG_I("授权卡片添加成功: UID=%s, 名称=%s", uid.c_str(), name.c_str());
             sendSuccessResponse(req);
         }
         else
@@ -1555,7 +1555,7 @@ void handleDeleteCard(AsyncWebServerRequest *request)
     }
 
     String uid = request->getParam("uid")->value();
-    LOG_D("DELETE /api/cards 请求，UID: %s", uid.c_str());
+    LOG_D("HTTP DELETE /api/cards?uid=%s", uid.c_str());
 
     bool found = false;
     auto it = authorizedCards.begin();
@@ -1581,7 +1581,7 @@ void handleDeleteCard(AsyncWebServerRequest *request)
 
     if (saveCardsToFile())
     {
-        LOG_I("卡片删除成功: UID=%s", uid.c_str());
+        LOG_I("授权卡片删除成功: UID=%s", uid.c_str());
         sendSuccessResponse(request);
     }
     else
@@ -1595,7 +1595,7 @@ void handleDeleteCard(AsyncWebServerRequest *request)
  */
 void handleReadCard(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/cards/read 请求");
+    LOG_D("HTTP GET /api/cards/read");
 
     sendCardSearchCommand();
 
@@ -1634,7 +1634,7 @@ void handleReadCard(AsyncWebServerRequest *request)
     doc["length"] = readResult.uidLength;
 
     sendSuccessResponse(request, doc);
-    LOG_I("读取卡片成功: UID=%s", uidStr);
+    LOG_I("NFC卡片读取成功: UID=%s", uidStr);
 }
 
 /**
@@ -1649,7 +1649,7 @@ void handleTestCard(AsyncWebServerRequest *request)
     }
 
     String uid = request->getParam("uid")->value();
-    LOG_D("GET /api/cards/test 请求，UID: %s", uid.c_str());
+    LOG_D("HTTP GET /api/cards/test?uid=%s", uid.c_str());
 
     // 验证UID格式
     if (uid.length() != 8)
@@ -1703,12 +1703,12 @@ void handleTestCard(AsyncWebServerRequest *request)
 
     if (authorized)
     {
-        LOG_I("卡片测试通过: UID=%s", uid.c_str());
+        LOG_D("卡片验证通过: UID=%s", uid.c_str());
         doc["message"] = "该卡片已授权";
     }
     else
     {
-        LOG_I("卡片测试未通过: UID=%s", uid.c_str());
+        LOG_D("卡片验证失败: UID=%s 未授权", uid.c_str());
         doc["message"] = "该卡片未授权";
     }
 
@@ -1720,7 +1720,7 @@ void handleTestCard(AsyncWebServerRequest *request)
  */
 void handleGetCardLogicConfig(AsyncWebServerRequest *request)
 {
-    LOG_D("GET /api/cards/logic-enabled 请求");
+    LOG_D("HTTP GET /api/cards/logic-enabled");
     JsonDocument doc;
     doc["enabled"] = cardLogicEnabled;
     sendSuccessResponse(request, doc);
@@ -1732,7 +1732,7 @@ void handleGetCardLogicConfig(AsyncWebServerRequest *request)
 void handleSetCardLogicConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
 {
     if (index == 0)
-        LOG_D("POST /api/cards/logic-enabled 请求体大小: %d", total);
+        LOG_D("HTTP POST /api/cards/logic-enabled 请求体大小: %d bytes", total);
 
     handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
                    {
@@ -1889,7 +1889,7 @@ void initWebServer()
 
     if (!hasSavedConfig)
     {
-        LOG_W("未保存的WiFi配置");
+        LOG_D("未保存的WiFi配置");
     }
 
     LOG_I("连接WiFi: %s", savedSSID.c_str());
@@ -1910,7 +1910,7 @@ void initWebServer()
         addTolist(10);
 
         WiFi.disconnect(true);
-        LOG_W("WiFi连接失败");
+        LOG_I("WiFi连接失败");
     }
 
     if (!wifisuccess)
