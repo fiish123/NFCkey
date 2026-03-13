@@ -244,7 +244,6 @@ void startAPMode()
     WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, AP_HIDDEN, AP_MAX_CONNECTION);
 
     LOG_I("AP热点启动成功: IP=%s", WiFi.softAPIP().toString().c_str());
-    LOG_I("密码: %s", AP_PASSWORD);
 }
 
 // =============================================================================
@@ -339,7 +338,15 @@ static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocume
  */
 static void sendErrorResponse(AsyncWebServerRequest *request, int code, const String &message)
 {
+    if (code >= 500)
+    {
         LOG_E("API错误响应: HTTP %d - %s", code, message.c_str());
+    }
+    else
+    {
+        LOG_W("API错误响应: HTTP %d - %s", code, message.c_str());
+    }
+
     ApiResponse response;
     response.success = false;
     response.code = code;
@@ -873,7 +880,6 @@ void initWebSocket()
                 AwsFrameInfo *info = (AwsFrameInfo*)arg;
                 if (info->opcode == WS_TEXT) {
                     String msg = String((char*)data, len);
-                    LOG_D("WebSocket收到消息: %s", msg.c_str());
 
                     JsonDocument req;
                     DeserializationError error = deserializeJson(req, msg);
@@ -1880,7 +1886,7 @@ void initWebServer()
     if (server != nullptr)
         return;
 
-    LOG_I("\n\n=== 初始化Web服务器 ===");
+    LOG_I("初始化Web服务器");
 
     addTolist(8);
 
@@ -1889,10 +1895,12 @@ void initWebServer()
 
     if (!hasSavedConfig)
     {
-        LOG_D("未保存的WiFi配置");
+        LOG_I("未检测到已保存的WiFi配置，将进入AP模式");
     }
-
-    LOG_I("连接WiFi: %s", savedSSID.c_str());
+    else
+    {
+        LOG_I("连接WiFi: %s", savedSSID.c_str());
+    }
     bool wifisuccess = false;
 
     WiFi.mode(WIFI_MODE_STA);
@@ -1910,7 +1918,7 @@ void initWebServer()
         addTolist(10);
 
         WiFi.disconnect(true);
-        LOG_I("WiFi连接失败");
+        LOG_W("WiFi连接失败，切换到AP模式");
     }
 
     if (!wifisuccess)
@@ -1938,7 +1946,6 @@ void initWebServer()
     {
         LOG_I("Web服务器启动，访问 http://%s", WiFi.localIP().toString().c_str());
     }
-    LOG_I("===========================");
 }
 
 /**

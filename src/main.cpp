@@ -256,10 +256,12 @@ void playAudio(unsigned int in)
 
   player1.setVolume(VOLUME1);
 
+  LOG_D("开始播放音频: %s", audioPath);
+
   // 播放音频文件（阻塞直到完成）
   player1.playPath(audioPath);
 
-  LOG_I("音频播放: %s", audioPath);
+  LOG_D("音频播放完成: %s", audioPath);
 }
 // 播放线程状态标记
 TaskHandle_t playerListHandle = NULL;
@@ -276,7 +278,6 @@ void playerList(void *parameter)
       isplaying = true;
       playAudio(playlist[playlistindex]);
       playlistindex++;
-      LOG_D("播放队列进度: %d/%d", playlistindex, playlistcount);
     }
 
     if (isplaying)
@@ -475,8 +476,6 @@ const char *CARDS_FILE_PATH = "/cards.json";
 // 从文件加载卡片数据
 void loadCardsDataFromFile()
 {
-  LOG_I("开始加载授权卡片数据");
-
   if (!LittleFS.exists(CARDS_FILE_PATH))
   {
     LOG_I("卡片配置文件不存在，创建默认文件");
@@ -626,7 +625,6 @@ NFCcard ReadCard()
   // 超时检查：如果已经开始接收帧但超过设定时间没有收到完整数据，则重置状态
   if (frameStarted && (millis() - lastReceiveTime > TIMEOUT_MS))
   {
-    LOG_V("串口接收超时，重置缓冲区");
     frameStarted = false;
     bufferIndex = 0;
     return readdata;
@@ -636,8 +634,6 @@ NFCcard ReadCard()
   {
     uint8_t incomingByte = Serial1.read();
     lastReceiveTime = millis(); // 更新最后接收时间
-
-    LOG_V("串口接收字节: 0x%02X", incomingByte);
 
     // 寻找帧起始符 0x20
     if (!frameStarted && incomingByte == 0x20)
@@ -661,8 +657,7 @@ NFCcard ReadCard()
         if (rxBuffer[0] != 0x20 || rxBuffer[13] != 0x03)
         {
 
-          LOG_V("数据帧格式错误: 起始=0x%X, 结束=0x%X", rxBuffer[0], rxBuffer[13]);
-          LOG_V("起始符: 0x%X, 结束符: 0x%X", rxBuffer[0], rxBuffer[13]);
+          LOG_W("NFC数据帧格式错误: 起始=0x%X, 结束=0x%X", rxBuffer[0], rxBuffer[13]);
 
           frameStarted = false;
           bufferIndex = 0;
@@ -680,7 +675,7 @@ NFCcard ReadCard()
 
         if (checksum != rxBuffer[12])
         {
-          LOG_V("数据帧校验失败");
+          LOG_W("NFC数据帧校验失败");
           frameStarted = false;
           bufferIndex = 0;
           readdata.uidLength = 0;
@@ -694,12 +689,6 @@ NFCcard ReadCard()
         readdata.uid[2] = rxBuffer[10];
         readdata.uid[3] = rxBuffer[11];
 
-        // 输出序列号
-        char serialStr[9];
-        sprintf(serialStr, "%02X%02X%02X%02X", readdata.uid[0], readdata.uid[1], readdata.uid[2], readdata.uid[3]);
-
-        LOG_V("读取到卡片UID: %s", serialStr);
-
         frameStarted = false;
         bufferIndex = 0;
         return readdata;
@@ -708,7 +697,7 @@ NFCcard ReadCard()
       // 防止缓冲区溢出
       if (bufferIndex >= sizeof(rxBuffer))
       {
-        LOG_V("数据缓冲区溢出，重置接收状态");
+        LOG_W("NFC接收缓冲区溢出，重置接收状态");
         frameStarted = false;
         bufferIndex = 0;
         readdata.uidLength = 0;
@@ -750,7 +739,6 @@ void sendCardSearchCommand()
     vTaskDelay(pdMS_TO_TICKS(1));
     now = millis();
   }
-  LOG_V("读卡操作耗时: %lu ms", now - last);
 }
 
 void setup()
@@ -856,7 +844,6 @@ void loop()
   if (!isWebServerRunning())
   {
     // 进入浅睡眠
-    LOG_I("进入Light Sleep休眠模式");
     powermanager(1, false);
     powermanager(2, false);
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -882,7 +869,6 @@ void loop()
     return;
   }
 
-  LOG_I("检测到卡片触发，系统唤醒");
   vTaskDelay(pdMS_TO_TICKS(10));
 
   // au:wait
@@ -894,8 +880,6 @@ void loop()
   // 检查 UART1 是否有数据可读
   if (Serial1.available() > 0)
   {
-    LOG_I("读卡器检测到NFC卡片");
-
     // 读取标签
     NFCcard currentcard;
     currentcard = ReadCard();
@@ -922,7 +906,7 @@ void loop()
         // 不匹配
         // leds[0] = CRGB::Red;
         // FastLED.show();
-    LOG_I("卡片验证失败，拒绝访问");
+        LOG_I("卡片验证失败，拒绝访问");
 
         // au:denied
         addTolist(4);
@@ -956,7 +940,6 @@ void loop()
 
   // 低电量提醒
   float voltage = read_battery_voltage();
-  LOG_D("电池电压: %.2f V", voltage);
   if (voltage <= 3.4 and voltage > 3.2)
   {
     LOG_W("电池电量低: %.2f V", voltage);
@@ -991,6 +974,7 @@ void loop()
       {
         if (!isWebServerRunning())
         {
+          LOG_I("连续刷卡验证通过，启动Web管理服务");
           initWebServer();
         }
         consecutiveCardCount = 0; // 重置计数器
@@ -998,13 +982,10 @@ void loop()
 
       if (isCardAuthorized(currentcard))
       {
-        // 匹配
-        LOG_I("卡片验证通过");
         consecutiveCardCount++;
       }
       else
       {
-        LOG_D("卡片验证失败");
         consecutiveCardCount = 0;
       }
     }
