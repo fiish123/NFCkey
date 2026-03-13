@@ -121,13 +121,14 @@ float read_battery_voltage();
 // 日志缓存结构体
 struct LogEntry
 {
+    uint32_t id;
     int level;
     String tag;
     String message;
     unsigned long timestamp;
 
-    LogEntry(int l, const char *t, const char *m, unsigned long ts)
-        : level(l), tag(t), message(m), timestamp(ts) {}
+    LogEntry(uint32_t logId, int l, const char *t, const char *m, unsigned long ts)
+        : id(logId), level(l), tag(t), message(m), timestamp(ts) {}
 };
 
 // WebSocket 日志相关函数
@@ -142,5 +143,6 @@ void handleWsWifiSaveConfig(AsyncWebSocketClient *client, const JsonDocument &re
 void handleWsWifiClearConfig(AsyncWebSocketClient *client, const JsonDocument &req);
 void handleWsWifiTest(AsyncWebSocketClient *client, const JsonDocument &req);
 void handleWsWifiTestStatus(AsyncWebSocketClient *client, const JsonDocument &req);
+void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req);
 
 #endif

@@ -479,6 +479,9 @@ let wsReconnectTimer = null;
 let wsReconnectAttempts = 0;
 const WS_MAX_RECONNECT_ATTEMPTS = 10;
 const WS_RECONNECT_DELAY = 3000;
+const LOG_REPLAY_STORAGE_KEY = 'logLastId';
+const LOG_MAX_ENTRIES = 500;
+const LOG_DEDUPE_WINDOW = 1000;
 
 // 当前过滤级别：0=全部, 1=ERROR, 2=WARN+, 3=INFO+, 4=DEBUG+, 5=VERBOSE+
 let currentFilterLevel = 3;
@@ -488,6 +491,10 @@ let allLogs = [];
 
 // 存储未读日志
 let unreadLogs = [];
+
+let recentLogIds = [];
+let seenLogIds = new Set();
+let latestLogId = 0;
 
 // ==================== WebSocket 请求管理系统 ====================
 
@@ -862,6 +869,7 @@ function initWebSocket() {
             console.log('WebSocket 连接成功');
             wsReconnectAttempts = 0;
             updateConnectionStatus(true);
+            requestLogReplay();
             // 触发自定义事件，通知其他模块 WebSocket 已连接
             document.dispatchEvent(new CustomEvent('ws-connected'));
         };
@@ -955,6 +963,102 @@ function closeWebSocket() {
     wsReconnectAttempts = WS_MAX_RECONNECT_ATTEMPTS; // 防止自动重连
 }
 
+function getStoredLastLogId() {
+    const rawValue = sessionStorage.getItem(LOG_REPLAY_STORAGE_KEY);
+    if (rawValue === null) {
+        return null;
+    }
+
+    const parsedValue = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
+        return null;
+    }
+
+    latestLogId = Math.max(latestLogId, parsedValue);
+    return parsedValue;
+}
+
+function storeLastLogId(logId) {
+    if (!Number.isFinite(logId) || logId <= 0) {
+        return;
+    }
+
+    latestLogId = logId;
+    sessionStorage.setItem(LOG_REPLAY_STORAGE_KEY, String(latestLogId));
+}
+
+function resetReplayCursor() {
+    latestLogId = 0;
+    recentLogIds = [];
+    seenLogIds = new Set();
+    sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
+}
+
+function normalizeLogId(logData) {
+    if (!logData || logData.id === undefined || logData.id === null) {
+        return null;
+    }
+
+    const parsedValue = Number.parseInt(logData.id, 10);
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        return null;
+    }
+
+    return parsedValue;
+}
+
+function rememberLogId(logId) {
+    if (!Number.isFinite(logId) || logId <= 0) {
+        return;
+    }
+
+    if (seenLogIds.has(logId)) {
+        return;
+    }
+
+    seenLogIds.add(logId);
+    recentLogIds.push(logId);
+
+    if (recentLogIds.length > LOG_DEDUPE_WINDOW) {
+        const removedLogId = recentLogIds.shift();
+        seenLogIds.delete(removedLogId);
+    }
+
+    storeLastLogId(logId);
+}
+
+function requestLogReplay() {
+    const lastLogId = getStoredLastLogId();
+    const replayRequest = {};
+
+    if (lastLogId !== null) {
+        replayRequest.lastLogId = lastLogId;
+    }
+
+    sendWsRequest('log/replay', replayRequest, 10000)
+        .then((data) => {
+            const replayLogs = data && Array.isArray(data.logs) ? data.logs : [];
+
+            if (data && data.mode === 'fallback' && typeof data.requestedLastLogId === 'number' && typeof data.latestAvailableLogId === 'number' && data.requestedLastLogId > data.latestAvailableLogId) {
+                resetReplayCursor();
+            }
+
+            replayLogs.forEach((log) => addLogEntry(log));
+
+            if (data && data.mode === 'fallback' && replayLogs.length > 0) {
+                console.info('日志回放降级为最近窗口:', {
+                    requestedLastLogId: data.requestedLastLogId,
+                    oldestAvailableLogId: data.oldestAvailableLogId,
+                    latestAvailableLogId: data.latestAvailableLogId
+                });
+            }
+        })
+        .catch((error) => {
+            console.error('请求日志回放失败:', error);
+        });
+}
+
 // 判断日志是否应该显示
 function shouldShowLog(logLevel, filterLevel) {
     // filterLevel: 0=全部, 1=ERROR, 2=WARN+, 3=INFO+, 4=DEBUG+, 5=VERBOSE+
@@ -974,17 +1078,26 @@ function shouldShowLog(logLevel, filterLevel) {
 
 // 添加日志条目
 function addLogEntry(logData) {
+    const logId = normalizeLogId(logData);
+    if (logId !== null && seenLogIds.has(logId)) {
+        return;
+    }
+
+    if (logId !== null) {
+        rememberLogId(logId);
+    }
+
     // 存储到数组
     allLogs.push(logData);
     
     // 限制日志数量（最多保留 500 条）
-    if (allLogs.length > 500) {
+    if (allLogs.length > LOG_MAX_ENTRIES) {
         allLogs.shift();
     }
     
     // 存储未读日志
     unreadLogs.push(logData);
-    if (unreadLogs.length > 500) {
+    if (unreadLogs.length > LOG_MAX_ENTRIES) {
         unreadLogs.shift();
     }
     

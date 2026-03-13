@@ -6,6 +6,8 @@
 
 #include "web_server.h"
 
+#include <deque>
+
 // 声明外部变量和函数
 struct NFCcard
 {
@@ -29,9 +31,11 @@ WebServerMode webserverMode = WS_MODE_OFF;
 
 // WebSocket 服务器实例
 AsyncWebSocket *ws = nullptr;
-// 日志缓存
 std::deque<LogEntry> logCache;
 #define LOG_CACHE_SIZE 500
+static const size_t LOG_REPLAY_FALLBACK_SIZE = 100;
+static uint32_t nextLogId = 1;
+static portMUX_TYPE logCacheMux = portMUX_INITIALIZER_UNLOCKED;
 
 // WiFi Preferences存储
 Preferences wifiPreferences;
@@ -431,6 +435,111 @@ static void sendWsError(AsyncWebSocketClient *client, const String &action,
     JsonDocument errData;
     errData["message"] = message;
     sendWsResponse(client, action, false, &errData, requestId);
+}
+
+static void appendLogJson(JsonArray logsArray, const LogEntry &entry)
+{
+    JsonObject logObj = logsArray.add<JsonObject>();
+    logObj["id"] = entry.id;
+    logObj["level"] = entry.level;
+    logObj["tag"] = entry.tag;
+    logObj["message"] = entry.message;
+    logObj["timestamp"] = entry.timestamp;
+}
+
+void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req)
+{
+    uint32_t requestId = req["requestId"] | 0;
+    const bool hasLastLogId = !req["lastLogId"].isNull();
+    const uint32_t requestedLastLogId = hasLastLogId ? req["lastLogId"].as<uint32_t>() : 0;
+    std::deque<LogEntry> logSnapshot;
+
+    portENTER_CRITICAL(&logCacheMux);
+    logSnapshot = logCache;
+    portEXIT_CRITICAL(&logCacheMux);
+
+    JsonDocument data;
+    JsonArray logsArray = data["logs"].to<JsonArray>();
+
+    if (hasLastLogId)
+    {
+        data["requestedLastLogId"] = requestedLastLogId;
+    }
+
+    if (logSnapshot.empty())
+    {
+        data["mode"] = "empty";
+        data["oldestAvailableLogId"] = 0;
+        data["latestAvailableLogId"] = 0;
+        sendWsResponse(client, "log/replay", true, &data, requestId);
+        return;
+    }
+
+    const uint32_t oldestAvailableLogId = logSnapshot.front().id;
+    const uint32_t latestAvailableLogId = logSnapshot.back().id;
+
+    data["oldestAvailableLogId"] = oldestAvailableLogId;
+    data["latestAvailableLogId"] = latestAvailableLogId;
+
+    if (!hasLastLogId)
+    {
+        data["mode"] = "tail";
+        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
+                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
+                                      : 0;
+        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
+        {
+            appendLogJson(logsArray, logSnapshot[i]);
+        }
+        sendWsResponse(client, "log/replay", true, &data, requestId);
+        return;
+    }
+
+    if (requestedLastLogId < oldestAvailableLogId)
+    {
+        data["mode"] = "fallback";
+        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
+                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
+                                      : 0;
+        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
+        {
+            appendLogJson(logsArray, logSnapshot[i]);
+        }
+        sendWsResponse(client, "log/replay", true, &data, requestId);
+        return;
+    }
+
+    if (requestedLastLogId == latestAvailableLogId)
+    {
+        data["mode"] = "empty";
+        sendWsResponse(client, "log/replay", true, &data, requestId);
+        return;
+    }
+
+    if (requestedLastLogId > latestAvailableLogId)
+    {
+        data["mode"] = "fallback";
+        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
+                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
+                                      : 0;
+        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
+        {
+            appendLogJson(logsArray, logSnapshot[i]);
+        }
+        sendWsResponse(client, "log/replay", true, &data, requestId);
+        return;
+    }
+
+    data["mode"] = "incremental";
+    for (const auto &entry : logSnapshot)
+    {
+        if (entry.id > requestedLastLogId)
+        {
+            appendLogJson(logsArray, entry);
+        }
+    }
+
+    sendWsResponse(client, "log/replay", true, &data, requestId);
 }
 
 // =============================================================================
@@ -853,21 +962,6 @@ void initWebSocket()
             case WS_EVT_CONNECT:
             {
                 LOG_D("WebSocket客户端连接: ID=%u", client->id());
-                // 发送缓存的日志给新连接的客户端（批量发送）
-                JsonDocument doc;
-                JsonArray logsArray = doc.to<JsonArray>();
-                
-                for (const auto &entry : logCache) {
-                    JsonObject logObj = logsArray.add<JsonObject>();
-                    logObj["level"] = entry.level;
-                    logObj["tag"] = entry.tag;
-                    logObj["message"] = entry.message;
-                    logObj["timestamp"] = entry.timestamp;
-                }
-                
-                String response;
-                serializeJson(doc, response);
-                client->text(response);
                 break;
             }
             case WS_EVT_DISCONNECT:
@@ -907,6 +1001,8 @@ void initWebSocket()
                         handleWsWifiTest(client, req);
                     } else if (action == "wifi/testStatus") {
                         handleWsWifiTestStatus(client, req);
+                    } else if (action == "log/replay") {
+                        handleWsLogReplay(client, req);
                     } else {
                         LOG_W("未知的WebSocket action: %s", action.c_str());
                     }
@@ -935,7 +1031,10 @@ void cleanupWebSocket()
         ws->closeAll();
         delete ws;
         ws = nullptr;
+        portENTER_CRITICAL(&logCacheMux);
         logCache.clear();
+        nextLogId = 1;
+        portEXIT_CRITICAL(&logCacheMux);
         LOG_I("WebSocket服务器已清理，断开所有客户端");
     }
 }
@@ -1991,16 +2090,20 @@ void broadcastLogToWebSocket(int level, const char *tag, const char *message)
         return;
 
     unsigned long timestamp = millis();
-    LogEntry entry(level, tag, message, timestamp);
+    uint32_t logId = 0;
 
-    logCache.push_back(entry);
+    portENTER_CRITICAL(&logCacheMux);
+    logId = nextLogId++;
+    logCache.push_back(LogEntry(logId, level, tag, message, timestamp));
     if (logCache.size() > LOG_CACHE_SIZE)
     {
         logCache.pop_front();
     }
+    portEXIT_CRITICAL(&logCacheMux);
 
     // 构建单条日志JSON
     JsonDocument doc;
+    doc["id"] = logId;
     doc["level"] = level;
     doc["tag"] = tag;
     doc["message"] = message;
