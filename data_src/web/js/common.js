@@ -482,9 +482,24 @@ const WS_RECONNECT_DELAY = 3000;
 const LOG_REPLAY_STORAGE_KEY = 'logLastId';
 const LOG_MAX_ENTRIES = 500;
 const LOG_DEDUPE_WINDOW = 1000;
+const LOG_LEVEL_LABELS = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'VERBOSE'];
 
 // 当前过滤级别：0=全部, 1=ERROR, 2=WARN+, 3=INFO+, 4=DEBUG+, 5=VERBOSE+
 let currentFilterLevel = 3;
+
+const WS_STATE = {
+    DISCONNECTED: 'disconnected',
+    CONNECTING: 'connecting',
+    CONNECTED: 'connected',
+    RECONNECTING: 'reconnecting'
+};
+
+let wsConnectionState = {
+    state: WS_STATE.DISCONNECTED,
+    connected: false,
+    attempt: 0,
+    reason: ''
+};
 
 // 存储所有日志条目（用于过滤）
 let allLogs = [];
@@ -581,6 +596,21 @@ function offWsEvent(action, callback) {
     }
 }
 
+function rejectPendingWsRequests(message) {
+    const error = new Error(message);
+
+    Object.keys(wsRequestCallbacks).forEach((requestId) => {
+        const callback = wsRequestCallbacks[requestId];
+        if (!callback) {
+            return;
+        }
+
+        clearTimeout(callback.timeoutTimer);
+        callback.reject(error);
+        delete wsRequestCallbacks[requestId];
+    });
+}
+
 // ==================== 日志浮窗系统 ====================
 
 // 浮窗状态
@@ -591,6 +621,8 @@ let dragOffset = { x: 0, y: 0 };
 
 // 初始化日志浮窗
 function initLogWindow() {
+    ensureLogWindowEnhancements();
+
     // 从 localStorage 读取偏好
     const savedState = localStorage.getItem('logWindowState');
     if (savedState) {
@@ -622,6 +654,51 @@ function initLogWindow() {
 
     // 初始化键盘快捷键
     initLogKeyboardShortcuts();
+
+    renderConnectionStatus();
+    updateLogMeta();
+    normalizeLogWindowPosition();
+}
+
+function ensureLogWindowEnhancements() {
+    const title = document.querySelector('.log-float-title');
+    if (title && !document.getElementById('log-connection-status')) {
+        const status = document.createElement('span');
+        status.id = 'log-connection-status';
+        status.className = 'log-connection-status';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        title.appendChild(status);
+    }
+
+    if (title && !document.getElementById('log-header-unread')) {
+        const unread = document.createElement('span');
+        unread.id = 'log-header-unread';
+        unread.className = 'log-header-unread';
+        unread.style.display = 'none';
+        title.appendChild(unread);
+    }
+
+    const toolbar = document.querySelector('.log-float-toolbar');
+    if (toolbar && !document.getElementById('log-meta')) {
+        const meta = document.createElement('div');
+        meta.id = 'log-meta';
+        meta.className = 'log-meta';
+        meta.innerHTML = [
+            '<span class="log-meta-chip" id="log-meta-state"></span>',
+            '<span class="log-meta-chip" id="log-meta-total"></span>',
+            '<span class="log-meta-chip" id="log-meta-unread"></span>'
+        ].join('');
+        toolbar.insertBefore(meta, toolbar.firstChild);
+    }
+
+    const toggleBtn = document.getElementById('log-toggle-btn');
+    if (toggleBtn && !toggleBtn.querySelector('.log-toggle-status-ring')) {
+        const ring = document.createElement('span');
+        ring.className = 'log-toggle-status-ring';
+        ring.setAttribute('aria-hidden', 'true');
+        toggleBtn.appendChild(ring);
+    }
 }
 
 // 显示/隐藏日志浮窗
@@ -693,6 +770,8 @@ function minimizeLogWindow() {
         }
     } else {
         logWindow.classList.remove('minimized');
+        unreadLogs = [];
+        updateLogBadge();
         if (minimizeBtn) {
             minimizeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
         }
@@ -719,6 +798,80 @@ function updateLogBadge() {
     } else {
         badge.style.display = 'none';
     }
+
+    updateLogMeta();
+}
+
+function getConnectionStatusLabel() {
+    switch (wsConnectionState.state) {
+        case WS_STATE.CONNECTED:
+            return 'WebSocket 在线';
+        case WS_STATE.RECONNECTING:
+            return `重连中 ${wsConnectionState.attempt}/${WS_MAX_RECONNECT_ATTEMPTS}`;
+        case WS_STATE.DISCONNECTED:
+            return 'WebSocket 离线';
+        case WS_STATE.CONNECTING:
+        default:
+            return 'WebSocket 连接中';
+    }
+}
+
+function getVisibleLogCount() {
+    return allLogs.filter(log => shouldShowLog(log.level, currentFilterLevel)).length;
+}
+
+function updateLogMeta() {
+    const stateElement = document.getElementById('log-meta-state');
+    const totalElement = document.getElementById('log-meta-total');
+    const unreadElement = document.getElementById('log-meta-unread');
+    const headerUnreadElement = document.getElementById('log-header-unread');
+    const unreadCount = getUnreadLogCount();
+
+    if (stateElement) {
+        stateElement.textContent = getConnectionStatusLabel();
+        stateElement.className = `log-meta-chip connection-${wsConnectionState.state}`;
+    }
+
+    if (totalElement) {
+        totalElement.textContent = `${getVisibleLogCount()}/${allLogs.length} 条日志`;
+    }
+
+    if (unreadElement) {
+        unreadElement.textContent = `未读 ${unreadCount}`;
+    }
+
+    if (headerUnreadElement) {
+        if (unreadCount > 0) {
+            headerUnreadElement.textContent = `未读 ${unreadCount}`;
+            headerUnreadElement.style.display = 'inline-flex';
+        } else {
+            headerUnreadElement.style.display = 'none';
+        }
+    }
+}
+
+function normalizeLogWindowPosition() {
+    const logWindow = document.getElementById('log-float-window');
+    if (!logWindow) return;
+
+    if (window.innerWidth <= 768) {
+        logWindow.style.left = '';
+        logWindow.style.top = '';
+        logWindow.style.right = '';
+        logWindow.style.bottom = '';
+        return;
+    }
+
+    const rect = logWindow.getBoundingClientRect();
+    const maxX = Math.max(0, window.innerWidth - logWindow.offsetWidth);
+    const maxY = Math.max(0, window.innerHeight - logWindow.offsetHeight);
+    const nextLeft = Math.max(0, Math.min(rect.left, maxX));
+    const nextTop = Math.max(0, Math.min(rect.top, maxY));
+
+    logWindow.style.right = 'auto';
+    logWindow.style.bottom = 'auto';
+    logWindow.style.left = `${nextLeft}px`;
+    logWindow.style.top = `${nextTop}px`;
 }
 
 // 初始化拖拽功能
@@ -807,6 +960,8 @@ function stopDrag() {
     saveLogWindowState();
 }
 
+window.addEventListener('resize', normalizeLogWindowPosition);
+
 // 初始化键盘快捷键
 function initLogKeyboardShortcuts() {
     document.addEventListener('keydown', function(e) {
@@ -861,6 +1016,17 @@ function initWebSocket() {
     // 获取当前页面的协议（ws 或 wss）
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+
+    updateConnectionStatus(false, {
+        state: wsReconnectAttempts > 0 ? WS_STATE.RECONNECTING : WS_STATE.CONNECTING,
+        attempt: wsReconnectAttempts,
+        reason: ''
+    });
     
     try {
         ws = new WebSocket(wsUrl);
@@ -868,7 +1034,11 @@ function initWebSocket() {
         ws.onopen = function() {
             console.log('WebSocket 连接成功');
             wsReconnectAttempts = 0;
-            updateConnectionStatus(true);
+            updateConnectionStatus(true, {
+                state: WS_STATE.CONNECTED,
+                attempt: 0,
+                reason: ''
+            });
             requestLogReplay();
             // 触发自定义事件，通知其他模块 WebSocket 已连接
             document.dispatchEvent(new CustomEvent('ws-connected'));
@@ -925,26 +1095,48 @@ function initWebSocket() {
         
         ws.onerror = function(error) {
             console.error('WebSocket 错误:', error);
-            updateConnectionStatus(false);
+            if (wsConnectionState.state === WS_STATE.CONNECTING) {
+                updateConnectionStatus(false, {
+                    state: WS_STATE.CONNECTING,
+                    attempt: wsReconnectAttempts,
+                    reason: '连接异常'
+                });
+            }
         };
         
         ws.onclose = function(event) {
             console.log('WebSocket 连接关闭:', event.code, event.reason);
-            updateConnectionStatus(false);
+            rejectPendingWsRequests(`WebSocket 已断开 (${event.code || 'unknown'})`);
             
             // 尝试重连
             if (wsReconnectAttempts < WS_MAX_RECONNECT_ATTEMPTS) {
                 wsReconnectAttempts++;
                 console.log(`尝试重连 (${wsReconnectAttempts}/${WS_MAX_RECONNECT_ATTEMPTS})...`);
+                updateConnectionStatus(false, {
+                    state: WS_STATE.RECONNECTING,
+                    attempt: wsReconnectAttempts,
+                    reason: event.reason || ''
+                });
                 
                 wsReconnectTimer = setTimeout(() => {
                     initWebSocket();
                 }, WS_RECONNECT_DELAY);
+            } else {
+                updateConnectionStatus(false, {
+                    state: WS_STATE.DISCONNECTED,
+                    attempt: wsReconnectAttempts,
+                    reason: event.reason || `连接关闭 (${event.code || 'unknown'})`
+                });
             }
         };
         
     } catch (e) {
         console.error('WebSocket 初始化失败:', e);
+        updateConnectionStatus(false, {
+            state: WS_STATE.DISCONNECTED,
+            attempt: wsReconnectAttempts,
+            reason: e.message || '初始化失败'
+        });
     }
 }
 
@@ -961,6 +1153,12 @@ function closeWebSocket() {
     }
     
     wsReconnectAttempts = WS_MAX_RECONNECT_ATTEMPTS; // 防止自动重连
+    rejectPendingWsRequests('WebSocket 已手动关闭');
+    updateConnectionStatus(false, {
+        state: WS_STATE.DISCONNECTED,
+        attempt: wsReconnectAttempts,
+        reason: '连接已关闭'
+    });
 }
 
 function getStoredLastLogId() {
@@ -1096,13 +1294,15 @@ function addLogEntry(logData) {
     }
     
     // 存储未读日志
-    unreadLogs.push(logData);
-    if (unreadLogs.length > LOG_MAX_ENTRIES) {
-        unreadLogs.shift();
+    if (!logWindowVisible || logWindowMinimized) {
+        unreadLogs.push(logData);
+        if (unreadLogs.length > LOG_MAX_ENTRIES) {
+            unreadLogs.shift();
+        }
     }
     
     // 如果浮窗隐藏，更新徽章
-    if (!logWindowVisible) {
+    if (!logWindowVisible || logWindowMinimized) {
         updateLogBadge();
     }
     
@@ -1110,12 +1310,15 @@ function addLogEntry(logData) {
     if (shouldShowLog(logData.level, currentFilterLevel) && logWindowVisible && !logWindowMinimized) {
         renderLogEntry(logData);
     }
+
+    updateLogMeta();
 }
 
 // 渲染单条日志
 function renderLogEntry(logData) {
     const logOutput = document.getElementById('log-output');
     if (!logOutput) return;
+    const shouldStickToBottom = isNearLogBottom(logOutput);
     
     // 创建日志元素
     const entry = document.createElement('div');
@@ -1123,17 +1326,25 @@ function renderLogEntry(logData) {
     
     // 格式化时间戳
     const time = formatTimestamp(logData.timestamp);
+    const levelLabel = getLogLevelLabel(logData.level);
+    const tagLabel = escapeHtml(logData.tag || 'SYSTEM');
+    const message = escapeHtml(logData.message || '');
     
     entry.innerHTML = `
-        <span class="log-time">${time}</span>
-        <span class="log-tag">${logData.tag}</span>
-        <span class="log-message">${escapeHtml(logData.message)}</span>
+        <div class="log-entry-meta">
+            <span class="log-level-badge">${levelLabel}</span>
+            <span class="log-time">${time}</span>
+            <span class="log-tag">${tagLabel}</span>
+        </div>
+        <div class="log-message">${message}</div>
     `;
     
     logOutput.appendChild(entry);
     
     // 自动滚动到底部
-    scrollToBottom();
+    if (shouldStickToBottom) {
+        scrollToBottom();
+    }
 }
 
 // 重新渲染所有日志（用于过滤级别变化）
@@ -1153,6 +1364,8 @@ function renderLogs() {
     
     // 滚动到底部
     scrollToBottom();
+
+    updateLogMeta();
 }
 
 // 获取日志级别的 CSS 类名
@@ -1177,6 +1390,15 @@ function formatTimestamp(timestamp) {
     const seconds = String(date.getSeconds()).padStart(2, '0');
     
     return `${hours}:${minutes}:${seconds}`;
+}
+
+function getLogLevelLabel(level) {
+    return LOG_LEVEL_LABELS[level] || 'INFO';
+}
+
+function isNearLogBottom(logOutput) {
+    const threshold = 24;
+    return logOutput.scrollHeight - logOutput.scrollTop - logOutput.clientHeight <= threshold;
 }
 
 // 滚动到日志底部
@@ -1231,20 +1453,49 @@ function clearLogs() {
     
     // 清空存储的日志
     allLogs = [];
+    unreadLogs = [];
     
     console.log('日志已清空');
+
+    updateLogBadge();
 }
 
-// 更新连接状态（可选：在 UI 上显示连接状态）
-function updateConnectionStatus(connected) {
-    // 可以在日志容器上添加连接状态指示
-    // 这里只是示例，可以根据需要实现
-    const logContainer = document.querySelector('.log-container');
-    if (logContainer) {
-        if (connected) {
-            logContainer.style.borderColor = 'var(--color-success)';
+function updateConnectionStatus(connected, options = {}) {
+    wsConnectionState = {
+        state: options.state || (connected ? WS_STATE.CONNECTED : WS_STATE.DISCONNECTED),
+        connected,
+        attempt: options.attempt || 0,
+        reason: options.reason || ''
+    };
+
+    renderConnectionStatus();
+    updateLogMeta();
+}
+
+function renderConnectionStatus() {
+    ensureLogWindowEnhancements();
+
+    const statusElement = document.getElementById('log-connection-status');
+    const toggleBtn = document.getElementById('log-toggle-btn');
+    const statusLabel = getConnectionStatusLabel();
+
+    if (statusElement) {
+        statusElement.textContent = statusLabel;
+        statusElement.className = `log-connection-status ${wsConnectionState.state}`;
+        if (wsConnectionState.reason) {
+            statusElement.title = wsConnectionState.reason;
         } else {
-            logContainer.style.borderColor = 'var(--color-border)';
+            statusElement.removeAttribute('title');
+        }
+    }
+
+    if (toggleBtn) {
+        toggleBtn.dataset.wsState = wsConnectionState.state;
+        toggleBtn.setAttribute('aria-label', `显示/隐藏日志，${statusLabel}`);
+        if (wsConnectionState.reason) {
+            toggleBtn.title = `${statusLabel} - ${wsConnectionState.reason}`;
+        } else {
+            toggleBtn.title = statusLabel;
         }
     }
 }
