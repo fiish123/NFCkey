@@ -222,13 +222,6 @@ async function loadCardsList() {
   }
 }
 
-// HTML转义函数
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 // 加载卡片逻辑配置
 async function loadCardLogicConfig() {
   try {

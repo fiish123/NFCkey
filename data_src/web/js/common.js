@@ -209,11 +209,6 @@ const Confirm = (function() {
     };
 })();
 
-// 显示浮窗通知（便捷方法）
-function showToast(msg, type = 'info', options = {}) {
-    return Toast.show(msg, type, options);
-}
-
 // 输入对话框系统
 const Prompt = (function() {
     // SVG 图标
@@ -323,12 +318,6 @@ const Prompt = (function() {
                 }, 200);
             }
             
-            // HTML 转义函数
-            function escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
         });
     }
     
@@ -350,6 +339,64 @@ function showConfirm(msg, options = {}) {
 // 显示输入对话框（便捷方法）
 function showPrompt(msg, options = {}) {
     return Prompt.show(msg, options);
+}
+
+function waitForWebSocketReady(timeout = 15000) {
+    return new Promise((resolve, reject) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            resolve();
+            return;
+        }
+
+        let settled = false;
+        let timeoutId = null;
+
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            document.removeEventListener('ws-connected', handleConnected);
+            document.removeEventListener('ws-state-changed', handleStateChanged);
+        };
+
+        const settle = (callback, value) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            cleanup();
+            callback(value);
+        };
+
+        const handleConnected = () => {
+            settle(resolve);
+        };
+
+        const handleStateChanged = (event) => {
+            const detail = event.detail || {};
+            if (detail.state === WS_STATE.DISCONNECTED && detail.attempt >= WS_MAX_RECONNECT_ATTEMPTS) {
+                settle(reject, new Error(detail.reason || 'WebSocket 连接失败'));
+            }
+        };
+
+        timeoutId = setTimeout(() => {
+            settle(reject, new Error('等待 WebSocket 连接超时'));
+        }, timeout);
+
+        document.addEventListener('ws-connected', handleConnected);
+        document.addEventListener('ws-state-changed', handleStateChanged);
+    });
+}
+
+function bindFilePickerTrigger(triggerElement, fileInput) {
+    if (!triggerElement || !fileInput) return;
+
+    triggerElement.addEventListener('click', function(e) {
+        if (e.target !== fileInput) {
+            fileInput.click();
+        }
+    });
 }
 
 // 格式化文件大小
@@ -1065,7 +1112,9 @@ function initWebSocket() {
                 // 处理日志数据（兼容原有日志系统）
                 if (Array.isArray(data)) {
                     // 历史日志数组
-                    data.forEach(log => addLogEntry(log));
+                    data.forEach((log) => {
+                        addLogEntry(log);
+                    });
                     return;
                 }
 
@@ -1242,7 +1291,9 @@ function requestLogReplay() {
                 resetReplayCursor();
             }
 
-            replayLogs.forEach((log) => addLogEntry(log));
+            replayLogs.forEach((log) => {
+                addLogEntry(log);
+            });
 
             if (data && data.mode === 'fallback' && replayLogs.length > 0) {
                 console.info('日志回放降级为最近窗口:', {
@@ -1467,6 +1518,10 @@ function updateConnectionStatus(connected, options = {}) {
         attempt: options.attempt || 0,
         reason: options.reason || ''
     };
+
+    document.dispatchEvent(new CustomEvent('ws-state-changed', {
+        detail: { ...wsConnectionState }
+    }));
 
     renderConnectionStatus();
     updateLogMeta();

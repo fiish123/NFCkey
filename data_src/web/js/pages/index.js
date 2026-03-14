@@ -2,22 +2,19 @@
 (function() {
     // 页面加载时获取系统信息
     function init() {
-        // 等待 WebSocket 连接成功后再获取系统信息
-        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
-            // WebSocket 已经连接，直接获取信息
-            loadSystemInfo();
-        } else {
-            // WebSocket 未连接，监听连接成功事件
-            document.addEventListener('ws-connected', function onWsConnected() {
-                loadSystemInfo();
-                // 移除监听器，避免重复调用
-                document.removeEventListener('ws-connected', onWsConnected);
+        waitForWebSocketReady()
+            .then(loadSystemInfo)
+            .catch((error) => {
+                console.error('等待 WebSocket 连接失败:', error);
+                document.getElementById('wifi').textContent = '获取失败';
+                loadBatteryInfo();
             });
-        }
     }
 
     // 获取系统信息
     function loadSystemInfo() {
+        loadBatteryInfo();
+
         // 获取WiFi信息
         sendWsRequest('wifi/getInfo')
             .then(data => {
@@ -35,7 +32,9 @@
                 document.getElementById('wifi').textContent = '获取失败';
             });
 
-        // 获取电池电压
+    }
+
+    function loadBatteryInfo() {
         fetch('/api/battery')
             .then(response => response.json())
             .then(response => {

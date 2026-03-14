@@ -13,84 +13,38 @@
     function init() {
         loadList(currentPath);
         loadStorageInfo();
-        initDragAndDrop();
+        initUploadInteractions();
     }
 
     // 初始化拖拽上传
-    function initDragAndDrop() {
+    function initUploadInteractions() {
         const uploadSection = document.getElementById('uploadSection');
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('file');
-        
-        if (!uploadSection || !uploadArea || !fileInput) return;
-        
-        // 点击上传区域触发文件选择
-        uploadArea.addEventListener('click', function(e) {
-            // 防止冒泡，避免重复触发
-            if (e.target !== fileInput) {
-                fileInput.click();
-            }
-        });
-        
-        fileInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                selectedFile = file;
-                displayFileInfo(file);
-                validateAndUpload(file);
-            }
-        });
-        
-        uploadArea.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadArea.classList.add('drag-over');
-        });
-        
-        uploadArea.addEventListener('dragleave', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadArea.classList.remove('drag-over');
-        });
-        
-        uploadArea.addEventListener('drop', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadArea.classList.remove('drag-over');
-            
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                selectedFile = files[0];
-                displayFileInfo(files[0]);
-                validateAndUpload(files[0]);
-            }
-        });
-    }
-
-    // 显示文件信息
-    function displayFileInfo(file) {
         const uploadContent = document.getElementById('uploadContent');
         const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const fileSize = document.getElementById('fileSize');
         
-        if (uploadContent) uploadContent.style.display = 'none';
-        if (fileInfo) {
-            fileInfo.style.display = 'block';
-            if (fileName) fileName.textContent = file.name;
-            if (fileSize) fileSize.textContent = formatFileSize(file.size);
-        }
+        if (!uploadSection || !uploadArea || !fileInput) return;
+        
+        bindFilePickerTrigger(uploadArea, fileInput);
+        initDragAndDrop(uploadArea, fileInput, function(file) {
+            if (file) {
+                selectedFile = file;
+                displayFileInfo(uploadContent, fileInfo, fileName, fileSize, file);
+                validateAndUpload(file);
+            }
+        });
     }
 
     // 重置上传区域
-    function resetUploadArea() {
+    function resetSelectedUploadArea() {
         const uploadContent = document.getElementById('uploadContent');
         const fileInfo = document.getElementById('fileInfo');
         const fileInput = document.getElementById('file');
-        
-        if (uploadContent) uploadContent.style.display = '';
-        if (fileInfo) fileInfo.style.display = 'none';
-        if (fileInput) fileInput.value = '';
+
+        resetUploadArea(uploadContent, fileInfo, fileInput);
         selectedFile = null;
     }
 
@@ -106,7 +60,7 @@
             .then(response => {
                 if (!response.success || !response.data) {
                     showToast('验证失败: ' + (response.message || '未知错误'), 'error');
-                    resetUploadArea();
+                    resetSelectedUploadArea();
                     return;
                 }
                 const fileSizeKB = Math.ceil(file.size / 1024);
@@ -114,7 +68,7 @@
                 
                 if (fileSizeKB > freeSpaceKB) {
                     showToast('存储空间不足！\n\n文件大小: ' + fileSizeKB + ' KB\n剩余空间: ' + freeSpaceKB + ' KB\n\n请删除一些文件后再试。', 'warning', { duration: 5000 });
-                    resetUploadArea();
+                    resetSelectedUploadArea();
                 } else {
                     uploadFile(file);
                 }
@@ -315,14 +269,12 @@
         xhr.onload = function() {
             if (xhr.status === 200) {
                 showToast('上传成功', 'success');
-                resetUploadArea();
+                resetSelectedUploadArea();
                 loadList(currentPath);
                 loadStorageInfo();
             } else {
                 showToast('上传失败', 'error');
-                // 只清空文件输入，保持文件信息显示
-                document.getElementById('file').value = '';
-                selectedFile = null;
+                resetSelectedUploadArea();
                 // 隐藏进度条
                 if (uploadProgress) uploadProgress.style.display = 'none';
             }
@@ -331,9 +283,7 @@
         // 上传错误
         xhr.onerror = function() {
             showToast('上传出错: 网络错误', 'error');
-            // 只清空文件输入，保持文件信息显示
-            document.getElementById('file').value = '';
-            selectedFile = null;
+            resetSelectedUploadArea();
             // 隐藏进度条
             if (uploadProgress) uploadProgress.style.display = 'none';
         };

@@ -834,11 +834,11 @@ void setup()
 
 void loop()
 {
-  // if (!isWebServerRunning())
-  // {  
-  //   initWebServer();
-  //   webServerStartTime = millis();
-  // }
+  if (!isWebServerRunning())
+  {  
+    initWebServer();
+    webServerStartTime = millis();
+  }
 
   // 如果Web服务器正在运行，不进入浅睡眠
   if (!isWebServerRunning())

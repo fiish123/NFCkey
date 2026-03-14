@@ -38,74 +38,29 @@
     function initFileUpload() {
         const uploadBox = document.getElementById('uploadBox');
         const fileInput = document.getElementById('file');
-        
-        if (!uploadBox || !fileInput) return;
-        
-        // 点击上传区域触发文件选择
-        uploadBox.addEventListener('click', function(e) {
-            // 防止冒泡，避免重复触发
-            if (e.target !== fileInput) {
-                fileInput.click();
-            }
-        });
-        
-        fileInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                selectedFile = file;
-                displayFileInfo(file);
-                validateAndUpload(file);
-            }
-        });
-        
-        uploadBox.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadBox.classList.add('drag-over');
-        });
-        
-        uploadBox.addEventListener('dragleave', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadBox.classList.remove('drag-over');
-        });
-        
-        uploadBox.addEventListener('drop', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            uploadBox.classList.remove('drag-over');
-            
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                selectedFile = files[0];
-                displayFileInfo(files[0]);
-                validateAndUpload(files[0]);
-            }
-        });
-    }
-    
-    function displayFileInfo(file) {
         const uploadBoxContent = document.getElementById('uploadBoxContent');
         const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const fileSize = document.getElementById('fileSize');
         
-        if (uploadBoxContent) uploadBoxContent.style.display = 'none';
-        if (fileInfo) {
-            fileInfo.style.display = 'block';
-            if (fileName) fileName.textContent = file.name;
-            if (fileSize) fileSize.textContent = formatFileSize(file.size);
-        }
+        if (!uploadBox || !fileInput) return;
+
+        bindFilePickerTrigger(uploadBox, fileInput);
+        initDragAndDrop(uploadBox, fileInput, function(file) {
+            if (file) {
+                selectedFile = file;
+                displayFileInfo(uploadBoxContent, fileInfo, fileName, fileSize, file);
+                validateAndUpload(file);
+            }
+        });
     }
     
-    function resetUploadArea() {
+    function resetSelectedUploadArea() {
         const uploadBoxContent = document.getElementById('uploadBoxContent');
         const fileInfo = document.getElementById('fileInfo');
         const fileInput = document.getElementById('file');
-        
-        if (uploadBoxContent) uploadBoxContent.style.display = '';
-        if (fileInfo) fileInfo.style.display = 'none';
-        if (fileInput) fileInput.value = '';
+
+        resetUploadArea(uploadBoxContent, fileInfo, fileInput);
         selectedFile = null;
     }
     
@@ -113,7 +68,7 @@
         // 验证文件扩展名
         if (!file.name.endsWith('.bin')) {
             showToast('请选择 .bin 格式的固件文件', 'error');
-            resetUploadArea();
+            resetSelectedUploadArea();
             return;
         }
         
@@ -121,7 +76,7 @@
         const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
         if (file.size > MAX_FILE_SIZE) {
             showToast('文件过大！最大支持2MB', 'error');
-            resetUploadArea();
+            resetSelectedUploadArea();
             return;
         }
         
@@ -177,14 +132,14 @@
                     console.error('解析错误信息失败:', e);
                 }
                 showToast('上传失败: ' + errorMsg, 'error');
-                resetUploadArea();
+                resetSelectedUploadArea();
                 document.getElementById('progressContainer').style.display = 'none';
             }
         };
 
         xhr.onerror = function() {
             showToast('上传失败: 网络错误', 'error');
-            resetUploadArea();
+            resetSelectedUploadArea();
             document.getElementById('progressContainer').style.display = 'none';
         };
         

@@ -6,18 +6,13 @@
 
     // 初始化
     function init() {
-        // 等待 WebSocket 连接成功后再获取 WiFi 状态
-        if (window.ws && window.ws.readyState === WebSocket.OPEN) {
-            // WebSocket 已经连接，直接获取状态
-            getWifiStatus();
-        } else {
-            // WebSocket 未连接，监听连接成功事件
-            document.addEventListener('ws-connected', function onWsConnected() {
-                getWifiStatus();
-                // 移除监听器，避免重复调用
-                document.removeEventListener('ws-connected', onWsConnected);
+        waitForWebSocketReady()
+            .then(getWifiStatus)
+            .catch((error) => {
+                console.error('等待 WebSocket 连接失败:', error);
+                document.getElementById('wifiStatusText').textContent = '获取失败';
+                showToast('WebSocket 连接失败，请稍后重试', 'error');
             });
-        }
         
         initPasswordToggle();
         initKeyboardSupport();
@@ -236,7 +231,7 @@
             
             // 检查是否是当前连接的网络
             const currentStatusText = document.getElementById('wifiStatusText').textContent;
-            const isConnected = currentStatusText.includes(escapeHtml(network.ssid));
+            const isConnected = currentStatusText.includes(network.ssid);
             
             div.innerHTML = `
                 <div class="wifi-info">
@@ -571,14 +566,6 @@
             default: return '加密';
         }
     }
-
-    // HTML转义
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     // 暴露给全局
     window.scanWifi = scanWifi;
     window.testConnection = testConnection;
