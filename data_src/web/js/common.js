@@ -397,6 +397,13 @@ function bindFilePickerTrigger(triggerElement, fileInput) {
             fileInput.click();
         }
     });
+
+    triggerElement.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileInput.click();
+        }
+    });
 }
 
 // 格式化文件大小
@@ -558,6 +565,8 @@ let recentLogIds = [];
 let seenLogIds = new Set();
 let latestLogId = 0;
 
+const LOG_HISTORY_STORAGE_KEY = 'logHistorySnapshot';
+
 // ==================== WebSocket 请求管理系统 ====================
 
 // 请求回调映射：{ requestId: { resolve, reject, timeout, action } }
@@ -666,8 +675,81 @@ let logWindowMinimized = false;
 let isDragging = false;
 let dragOffset = { x: 0, y: 0 };
 
+function ensureLogWindowMarkup() {
+    if (document.getElementById('log-toggle-btn') && document.getElementById('log-float-window')) {
+        return;
+    }
+
+    const toggleBtn = document.createElement('div');
+    toggleBtn.innerHTML = `
+        <button type="button" id="log-toggle-btn" class="log-toggle-btn" onclick="toggleLogWindow()" aria-label="显示/隐藏日志" aria-controls="log-float-window" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span class="log-toggle-badge" id="log-toggle-badge" style="display: none;"></span>
+        </button>
+    `;
+    document.body.appendChild(toggleBtn.firstElementChild);
+
+    const logWindow = document.createElement('div');
+    logWindow.innerHTML = `
+        <div id="log-float-window" class="log-float-window" style="display: none;" role="dialog" aria-labelledby="log-float-title">
+            <div class="log-float-header" id="log-float-header">
+                <div class="log-float-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    <span id="log-float-title">系统日志</span>
+                </div>
+                <div class="log-float-controls">
+                    <button type="button" class="log-float-minimize-btn" onclick="minimizeLogWindow()" aria-label="最小化" title="最小化">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="log-float-close-btn" onclick="toggleLogWindow()" aria-label="关闭" title="关闭">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="log-float-body" id="log-float-body">
+                <div class="log-float-toolbar" role="toolbar" aria-label="日志工具栏">
+                    <select id="log-filter" onchange="setLogFilter(this.value)" aria-label="日志级别过滤">
+                        <option value="0">全部</option>
+                        <option value="1">ERROR</option>
+                        <option value="2">WARN+</option>
+                        <option value="3">INFO+</option>
+                        <option value="4">DEBUG+</option>
+                        <option value="5">VERBOSE+</option>
+                    </select>
+                    <button type="button" onclick="clearLogs()" aria-label="清空日志">清空</button>
+                </div>
+                <div id="log-output" class="log-float-output" role="log" aria-live="polite" aria-atomic="false"></div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(logWindow.firstElementChild);
+}
+
 // 初始化日志浮窗
 function initLogWindow() {
+    ensureLogWindowMarkup();
+
+    const filterSelect = document.getElementById('log-filter');
+    if (filterSelect) {
+        filterSelect.value = String(currentFilterLevel);
+    }
+
+    restorePersistedLogHistory();
+
     ensureLogWindowEnhancements();
 
     // 从 localStorage 读取偏好
@@ -676,7 +758,7 @@ function initLogWindow() {
         try {
             const state = JSON.parse(savedState);
             if (state.visible) {
-                showLogWindow();
+                showLogWindow({ preserveUnread: !!state.minimized });
                 if (state.minimized) {
                     minimizeLogWindow();
                 }
@@ -696,6 +778,8 @@ function initLogWindow() {
         }
     }
 
+    updateLogBadge();
+
     // 初始化拖拽
     initLogWindowDrag();
 
@@ -709,15 +793,6 @@ function initLogWindow() {
 
 function ensureLogWindowEnhancements() {
     const title = document.querySelector('.log-float-title');
-    if (title && !document.getElementById('log-connection-status')) {
-        const status = document.createElement('span');
-        status.id = 'log-connection-status';
-        status.className = 'log-connection-status';
-        status.setAttribute('role', 'status');
-        status.setAttribute('aria-live', 'polite');
-        title.appendChild(status);
-    }
-
     if (title && !document.getElementById('log-header-unread')) {
         const unread = document.createElement('span');
         unread.id = 'log-header-unread';
@@ -762,6 +837,7 @@ function toggleLogWindow() {
             logWindow.style.display = 'none';
             logWindow.classList.remove('closing');
             toggleBtn.style.display = 'flex';
+            toggleBtn.setAttribute('aria-expanded', 'false');
         }, 200);
         logWindowVisible = false;
     } else {
@@ -769,10 +845,13 @@ function toggleLogWindow() {
         logWindow.style.display = 'flex';
         logWindowVisible = true;
         toggleBtn.style.display = 'none';
+        toggleBtn.setAttribute('aria-expanded', 'true');
         
         // 清空未读日志
         unreadLogs = [];
+        persistLogHistory();
         updateLogBadge();
+        renderLogs();
     }
 
     // 保存状态
@@ -780,19 +859,23 @@ function toggleLogWindow() {
 }
 
 // 显示日志浮窗
-function showLogWindow() {
+function showLogWindow(options = {}) {
     const logWindow = document.getElementById('log-float-window');
     const toggleBtn = document.getElementById('log-toggle-btn');
+    const preserveUnread = !!options.preserveUnread;
     
     if (!logWindow || logWindowVisible) return;
 
     logWindow.style.display = 'flex';
     logWindowVisible = true;
     toggleBtn.style.display = 'none';
+    toggleBtn.setAttribute('aria-expanded', 'true');
     
-    // 清空未读日志
-    unreadLogs = [];
-    updateLogBadge();
+    if (!preserveUnread) {
+        unreadLogs = [];
+        persistLogHistory();
+        updateLogBadge();
+    }
 
     // 自动渲染所有日志
     renderLogs();
@@ -818,6 +901,7 @@ function minimizeLogWindow() {
     } else {
         logWindow.classList.remove('minimized');
         unreadLogs = [];
+        persistLogHistory();
         updateLogBadge();
         if (minimizeBtn) {
             minimizeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
@@ -852,14 +936,14 @@ function updateLogBadge() {
 function getConnectionStatusLabel() {
     switch (wsConnectionState.state) {
         case WS_STATE.CONNECTED:
-            return 'WebSocket 在线';
+            return '已连接';
         case WS_STATE.RECONNECTING:
             return `重连中 ${wsConnectionState.attempt}/${WS_MAX_RECONNECT_ATTEMPTS}`;
         case WS_STATE.DISCONNECTED:
-            return 'WebSocket 离线';
+            return '未连接';
         case WS_STATE.CONNECTING:
         default:
-            return 'WebSocket 连接中';
+            return '连接中';
     }
 }
 
@@ -1242,6 +1326,49 @@ function resetReplayCursor() {
     sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
 }
 
+function persistLogHistory() {
+    const snapshot = {
+        logs: allLogs.slice(-LOG_MAX_ENTRIES),
+        unreadLogs: unreadLogs.slice(-LOG_MAX_ENTRIES)
+    };
+
+    try {
+        sessionStorage.setItem(LOG_HISTORY_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (error) {
+        console.warn('保存日志历史失败:', error);
+    }
+}
+
+function restorePersistedLogHistory() {
+    const rawValue = sessionStorage.getItem(LOG_HISTORY_STORAGE_KEY);
+    if (!rawValue) {
+        return;
+    }
+
+    try {
+        const snapshot = JSON.parse(rawValue);
+        const restoredLogs = Array.isArray(snapshot?.logs) ? snapshot.logs.slice(-LOG_MAX_ENTRIES) : [];
+        const restoredUnreadLogs = Array.isArray(snapshot?.unreadLogs) ? snapshot.unreadLogs.slice(-LOG_MAX_ENTRIES) : [];
+
+        allLogs = restoredLogs;
+        unreadLogs = restoredUnreadLogs;
+
+        resetReplayCursor();
+        allLogs.forEach((logData) => {
+            const logId = normalizeLogId(logData);
+            if (logId !== null) {
+                rememberLogId(logId);
+            }
+        });
+    } catch (error) {
+        console.warn('恢复日志历史失败:', error);
+        sessionStorage.removeItem(LOG_HISTORY_STORAGE_KEY);
+        allLogs = [];
+        unreadLogs = [];
+        resetReplayCursor();
+    }
+}
+
 function normalizeLogId(logData) {
     if (!logData || logData.id === undefined || logData.id === null) {
         return null;
@@ -1351,6 +1478,8 @@ function addLogEntry(logData) {
             unreadLogs.shift();
         }
     }
+
+    persistLogHistory();
     
     // 如果浮窗隐藏，更新徽章
     if (!logWindowVisible || logWindowMinimized) {
@@ -1505,6 +1634,14 @@ function clearLogs() {
     // 清空存储的日志
     allLogs = [];
     unreadLogs = [];
+    recentLogIds = [];
+    seenLogIds = new Set();
+    sessionStorage.removeItem(LOG_HISTORY_STORAGE_KEY);
+    if (latestLogId > 0) {
+        storeLastLogId(latestLogId);
+    } else {
+        sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
+    }
     
     console.log('日志已清空');
 
@@ -1530,19 +1667,8 @@ function updateConnectionStatus(connected, options = {}) {
 function renderConnectionStatus() {
     ensureLogWindowEnhancements();
 
-    const statusElement = document.getElementById('log-connection-status');
     const toggleBtn = document.getElementById('log-toggle-btn');
     const statusLabel = getConnectionStatusLabel();
-
-    if (statusElement) {
-        statusElement.textContent = statusLabel;
-        statusElement.className = `log-connection-status ${wsConnectionState.state}`;
-        if (wsConnectionState.reason) {
-            statusElement.title = wsConnectionState.reason;
-        } else {
-            statusElement.removeAttribute('title');
-        }
-    }
 
     if (toggleBtn) {
         toggleBtn.dataset.wsState = wsConnectionState.state;

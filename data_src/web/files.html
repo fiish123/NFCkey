@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/web/css/pages.css">
 </head>
 <body id="page-files">
+    <main>
     <div class="container" data-animate>
         <h1>文件管理</h1>
 
@@ -32,10 +33,10 @@
         <!-- 文件上传 -->
         <div class="section" id="uploadSection">
             <h3>上传文件</h3>
-            <div class="upload-area" id="uploadArea">
-                <input type="file" id="file" style="display: none;" />
-                <div id="uploadContent" class="upload-content">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 48px; height: 48px; margin-bottom: var(--spacing-md);">
+            <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="选择要上传的文件或拖拽文件到此处">
+                <input type="file" id="file" style="display: none;" aria-label="选择要上传的文件" />
+            <div id="uploadContent" class="upload-content">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 48px; height: 48px; margin-bottom: var(--spacing-md);" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -51,7 +52,7 @@
             <!-- 上传进度 -->
             <div id="uploadProgress" class="upload-progress">
                 <div id="uploadProgressBar" class="upload-progress-bar"></div>
-                <span id="uploadProgressText" class="upload-progress-text">0%</span>
+                <span id="uploadProgressText" class="upload-progress-text" role="status" aria-live="polite">0%</span>
             </div>
         </div>
 
@@ -59,15 +60,15 @@
         <div class="section">
             <h3>文件浏览器</h3>
             <div class="path-bar">
-                <button onclick="goToParent()" class="btn-sm">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;">
+                <button type="button" onclick="goToParent()" class="btn-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;" aria-hidden="true">
                         <polyline points="15 18 9 12 15 6"></polyline>
                     </svg>
                     上级目录
                 </button>
-                <input type="text" id="currentPath" value="/" readonly class="path-input" />
-                <button onclick="createDir()" class="btn-sm">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;">
+                <input type="text" id="currentPath" value="/" readonly class="path-input" aria-readonly="true" aria-label="当前路径" />
+                <button type="button" onclick="createDir()" class="btn-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;" aria-hidden="true">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                         <line x1="12" y1="8" x2="12" y2="16"></line>
                         <line x1="8" y1="12" x2="16" y2="12"></line>
@@ -81,67 +82,15 @@
         <!-- 返回首页 -->
         <div style="text-align: center; margin-top: var(--spacing-xl);">
             <a href="/" class="btn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;" aria-hidden="true">
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>
                 返回首页
             </a>
         </div>
-
     </div>
-
-    <!-- 日志切换按钮 -->
-    <button id="log-toggle-btn" class="log-toggle-btn" onclick="toggleLogWindow()" aria-label="显示/隐藏日志">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-            <polyline points="10 9 9 9 8 9"></polyline>
-        </svg>
-        <span class="log-toggle-badge" id="log-toggle-badge" style="display: none;"></span>
-    </button>
-
-    <!-- 日志浮窗 -->
-    <div id="log-float-window" class="log-float-window" style="display: none;">
-        <div class="log-float-header" id="log-float-header">
-            <div class="log-float-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-                <span>系统日志</span>
-            </div>
-            <div class="log-float-controls">
-                <button class="log-float-minimize-btn" onclick="minimizeLogWindow()" aria-label="最小化" title="最小化">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                </button>
-                <button class="log-float-close-btn" onclick="toggleLogWindow()" aria-label="关闭" title="关闭">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                </button>
-            </div>
-        </div>
-        <div class="log-float-body" id="log-float-body">
-            <div class="log-float-toolbar">
-                <select id="log-filter" onchange="setLogFilter(this.value)" aria-label="日志级别过滤">
-                    <option value="0">全部</option>
-                    <option value="1">ERROR</option>
-                    <option value="2">WARN+</option>
-                    <option value="3">INFO+</option>
-                    <option value="4">DEBUG+</option>
-                    <option value="5">VERBOSE+</option>
-                </select>
-                <button onclick="clearLogs()" aria-label="清空日志">清空</button>
-            </div>
-            <div id="log-output" class="log-float-output"></div>
-        </div>
-    </div>
+    </main>
 
     <script src="/web/js/common.js"></script>
     <script src="/web/js/pages/files.js"></script>

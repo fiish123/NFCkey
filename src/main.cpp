@@ -474,7 +474,7 @@ std::vector<NFCcard> authorizedCards;
 const char *CARDS_FILE_PATH = "/cards.json";
 
 // 从文件加载卡片数据
-void loadCardsDataFromFile()
+bool loadCardsDataFromFile()
 {
   if (!LittleFS.exists(CARDS_FILE_PATH))
   {
@@ -489,7 +489,7 @@ void loadCardsDataFromFile()
     if (!file)
     {
       LOG_E("创建卡片配置文件失败");
-      return;
+      return false;
     }
 
     serializeJson(doc, file);
@@ -503,7 +503,7 @@ void loadCardsDataFromFile()
   if (!file)
   {
     LOG_E("打开卡片配置文件失败");
-    return;
+    return false;
   }
 
   JsonDocument doc;
@@ -513,7 +513,7 @@ void loadCardsDataFromFile()
   if (error)
   {
     LOG_E("卡片配置JSON解析失败: %s", error.c_str());
-    return;
+    return false;
   }
 
   // 清空当前列表
@@ -542,6 +542,12 @@ void loadCardsDataFromFile()
   }
 
   LOG_I("授权卡片加载完成: %d 张", authorizedCards.size());
+  if (authorizedCards.size() <= 0)
+  {
+    return false;
+  }
+
+  return true;
 }
 
 // 保存卡片数据到文件
@@ -793,8 +799,14 @@ void setup()
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
+  bool webdebug = true;
+
   // 加载卡片数据
-  loadCardsDataFromFile();
+  if (!loadCardsDataFromFile() || webdebug)
+  {
+    initWebServer();
+    webServerStartTime = millis();
+  }
 
   // 初始化播放器
   auto cfg = i2s.defaultConfig();
@@ -834,12 +846,6 @@ void setup()
 
 void loop()
 {
-  if (!isWebServerRunning())
-  {  
-    initWebServer();
-    webServerStartTime = millis();
-  }
-
   // 如果Web服务器正在运行，不进入浅睡眠
   if (!isWebServerRunning())
   {
