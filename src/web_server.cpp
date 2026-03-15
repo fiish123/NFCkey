@@ -8,6 +8,11 @@
 
 #include <deque>
 
+extern "C"
+{
+#include <esp_system.h>
+}
+
 // 声明外部变量和函数
 struct NFCcard
 {
@@ -32,10 +37,25 @@ WebServerMode webserverMode = WS_MODE_OFF;
 // WebSocket 服务器实例
 AsyncWebSocket *ws = nullptr;
 std::deque<LogEntry> logCache;
-#define LOG_CACHE_SIZE 500
-static const size_t LOG_REPLAY_FALLBACK_SIZE = 100;
+static constexpr size_t LOG_CACHE_SIZE = 256;
+static constexpr size_t LOG_REPLAY_FALLBACK_SIZE = 64;
+static constexpr size_t LOG_REPLAY_MAX_BATCH_SIZE = 64;
+static constexpr size_t LOG_SINGLE_ENTRY_JSON_BUFFER_SIZE = 384;
+static constexpr size_t WS_MAX_INCOMING_MESSAGE_SIZE = 512;
+static uint32_t logSessionId = 0;
 static uint32_t nextLogId = 1;
 static portMUX_TYPE logCacheMux = portMUX_INITIALIZER_UNLOCKED;
+
+static uint32_t generateLogSessionId()
+{
+    uint32_t sessionId = esp_random();
+    if (sessionId == 0)
+    {
+        sessionId = 1;
+    }
+
+    return sessionId;
+}
 
 // WiFi Preferences存储
 Preferences wifiPreferences;
@@ -440,6 +460,7 @@ static void sendWsError(AsyncWebSocketClient *client, const String &action,
 static void appendLogJson(JsonArray logsArray, const LogEntry &entry)
 {
     JsonObject logObj = logsArray.add<JsonObject>();
+    logObj["sessionId"] = entry.sessionId;
     logObj["id"] = entry.id;
     logObj["level"] = entry.level;
     logObj["tag"] = entry.tag;
@@ -447,99 +468,161 @@ static void appendLogJson(JsonArray logsArray, const LogEntry &entry)
     logObj["timestamp"] = entry.timestamp;
 }
 
+static bool sendWsTextBufferToClient(AsyncWebSocketClient *client, const char *payload, size_t payloadLength)
+{
+    AsyncWebSocket *currentWs = ws;
+    if (!currentWs || !client || !payload || payloadLength == 0)
+        return false;
+
+    currentWs->cleanupClients();
+
+    if (client->status() != WS_CONNECTED || client->queueIsFull())
+        return false;
+
+    AsyncWebSocketMessageBuffer *buffer = currentWs->makeBuffer(reinterpret_cast<const uint8_t *>(payload), payloadLength);
+    if (!buffer)
+        return false;
+
+    return currentWs->text(client->id(), buffer);
+}
+
+static AsyncWebSocket::SendStatus broadcastWsTextBuffer(const char *payload, size_t payloadLength)
+{
+    AsyncWebSocket *currentWs = ws;
+    if (!currentWs || !payload || payloadLength == 0)
+        return AsyncWebSocket::DISCARDED;
+
+    currentWs->cleanupClients();
+
+    if (currentWs->count() == 0)
+        return AsyncWebSocket::DISCARDED;
+
+    AsyncWebSocketMessageBuffer *buffer = currentWs->makeBuffer(reinterpret_cast<const uint8_t *>(payload), payloadLength);
+    if (!buffer)
+        return AsyncWebSocket::DISCARDED;
+
+    return currentWs->textAll(buffer);
+}
+
+static size_t selectTailLogs(const std::deque<LogEntry> &source, LogEntry *target, size_t tailCount)
+{
+    const size_t copyCount = source.size() < tailCount ? source.size() : tailCount;
+    const size_t startIndex = source.size() - copyCount;
+
+    for (size_t i = 0; i < copyCount; ++i)
+    {
+        target[i] = source[startIndex + i];
+    }
+
+    return copyCount;
+}
+
 void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req)
 {
     uint32_t requestId = req["requestId"] | 0;
     const bool hasLastLogId = !req["lastLogId"].isNull();
     const uint32_t requestedLastLogId = hasLastLogId ? req["lastLogId"].as<uint32_t>() : 0;
-    std::deque<LogEntry> logSnapshot;
+    const bool hasRequestedSessionId = !req["sessionId"].isNull();
+    const uint32_t requestedSessionId = hasRequestedSessionId ? req["sessionId"].as<uint32_t>() : 0;
+    const bool sessionChanged = hasRequestedSessionId && requestedSessionId != 0 && requestedSessionId != logSessionId;
+    LogEntry selectedLogs[LOG_REPLAY_MAX_BATCH_SIZE];
+    size_t selectedLogCount = 0;
+    const char *mode = "empty";
+    uint32_t oldestAvailableLogId = 0;
+    uint32_t latestAvailableLogId = 0;
 
     portENTER_CRITICAL(&logCacheMux);
-    logSnapshot = logCache;
+
+    if (!logCache.empty())
+    {
+        oldestAvailableLogId = logCache.front().id;
+        latestAvailableLogId = logCache.back().id;
+
+        if (sessionChanged)
+        {
+            mode = "tail";
+            selectedLogCount = selectTailLogs(logCache, selectedLogs, LOG_REPLAY_FALLBACK_SIZE);
+        }
+        else if (!hasLastLogId)
+        {
+            mode = "tail";
+            selectedLogCount = selectTailLogs(logCache, selectedLogs, LOG_REPLAY_FALLBACK_SIZE);
+        }
+        else if (requestedLastLogId < oldestAvailableLogId || requestedLastLogId > latestAvailableLogId)
+        {
+            mode = "fallback";
+            selectedLogCount = selectTailLogs(logCache, selectedLogs, LOG_REPLAY_FALLBACK_SIZE);
+        }
+        else if (requestedLastLogId != latestAvailableLogId)
+        {
+            size_t pendingCount = 0;
+            for (const auto &entry : logCache)
+            {
+                if (entry.id > requestedLastLogId)
+                {
+                    pendingCount++;
+                }
+            }
+
+            if (pendingCount > LOG_REPLAY_MAX_BATCH_SIZE)
+            {
+                mode = "fallback";
+                selectedLogCount = selectTailLogs(logCache, selectedLogs, LOG_REPLAY_FALLBACK_SIZE);
+            }
+            else
+            {
+                mode = "incremental";
+                for (const auto &entry : logCache)
+                {
+                    if (entry.id > requestedLastLogId && selectedLogCount < LOG_REPLAY_MAX_BATCH_SIZE)
+                    {
+                        selectedLogs[selectedLogCount++] = entry;
+                    }
+                }
+            }
+        }
+    }
+
     portEXIT_CRITICAL(&logCacheMux);
 
     JsonDocument data;
     JsonArray logsArray = data["logs"].to<JsonArray>();
+    data["sessionId"] = logSessionId;
+    data["sessionChanged"] = sessionChanged;
+    data["mode"] = mode;
+    data["oldestAvailableLogId"] = oldestAvailableLogId;
+    data["latestAvailableLogId"] = latestAvailableLogId;
 
     if (hasLastLogId)
     {
         data["requestedLastLogId"] = requestedLastLogId;
     }
 
-    if (logSnapshot.empty())
+    for (size_t i = 0; i < selectedLogCount; ++i)
     {
-        data["mode"] = "empty";
-        data["oldestAvailableLogId"] = 0;
-        data["latestAvailableLogId"] = 0;
-        sendWsResponse(client, "log/replay", true, &data, requestId);
+        appendLogJson(logsArray, selectedLogs[i]);
+    }
+
+    JsonDocument response;
+    response["action"] = "log/replay";
+    response["success"] = true;
+    if (requestId != 0)
+        response["requestId"] = requestId;
+    response["data"] = data;
+
+    String payload;
+    const size_t payloadLength = measureJson(response);
+    if (!payload.reserve(payloadLength + 1))
+    {
+        sendWsError(client, "log/replay", "日志回放内存不足", requestId);
         return;
     }
 
-    const uint32_t oldestAvailableLogId = logSnapshot.front().id;
-    const uint32_t latestAvailableLogId = logSnapshot.back().id;
-
-    data["oldestAvailableLogId"] = oldestAvailableLogId;
-    data["latestAvailableLogId"] = latestAvailableLogId;
-
-    if (!hasLastLogId)
+    serializeJson(response, payload);
+    if (!sendWsTextBufferToClient(client, payload.c_str(), payload.length()) && client && client->status() == WS_CONNECTED)
     {
-        data["mode"] = "tail";
-        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
-                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
-                                      : 0;
-        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
-        {
-            appendLogJson(logsArray, logSnapshot[i]);
-        }
-        sendWsResponse(client, "log/replay", true, &data, requestId);
-        return;
+        client->close(1013, "log replay busy");
     }
-
-    if (requestedLastLogId < oldestAvailableLogId)
-    {
-        data["mode"] = "fallback";
-        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
-                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
-                                      : 0;
-        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
-        {
-            appendLogJson(logsArray, logSnapshot[i]);
-        }
-        sendWsResponse(client, "log/replay", true, &data, requestId);
-        return;
-    }
-
-    if (requestedLastLogId == latestAvailableLogId)
-    {
-        data["mode"] = "empty";
-        sendWsResponse(client, "log/replay", true, &data, requestId);
-        return;
-    }
-
-    if (requestedLastLogId > latestAvailableLogId)
-    {
-        data["mode"] = "fallback";
-        const size_t startIndex = logSnapshot.size() > LOG_REPLAY_FALLBACK_SIZE
-                                      ? logSnapshot.size() - LOG_REPLAY_FALLBACK_SIZE
-                                      : 0;
-        for (size_t i = startIndex; i < logSnapshot.size(); ++i)
-        {
-            appendLogJson(logsArray, logSnapshot[i]);
-        }
-        sendWsResponse(client, "log/replay", true, &data, requestId);
-        return;
-    }
-
-    data["mode"] = "incremental";
-    for (const auto &entry : logSnapshot)
-    {
-        if (entry.id > requestedLastLogId)
-        {
-            appendLogJson(logsArray, entry);
-        }
-    }
-
-    sendWsResponse(client, "log/replay", true, &data, requestId);
 }
 
 // =============================================================================
@@ -953,6 +1036,11 @@ void initWebSocket()
     if (ws != nullptr)
         return;
 
+    if (logSessionId == 0)
+    {
+        logSessionId = generateLogSessionId();
+    }
+
     ws = new AsyncWebSocket("/ws");
 
     ws->onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
@@ -961,11 +1049,13 @@ void initWebSocket()
         switch (type) {
             case WS_EVT_CONNECT:
             {
+                client->setCloseClientOnQueueFull(false);
                 LOG_D("WebSocket客户端连接: ID=%u", client->id());
                 break;
             }
             case WS_EVT_DISCONNECT:
             {
+                server->cleanupClients();
                 LOG_D("WebSocket客户端断开: ID=%u", client->id());
                 break;
             }
@@ -973,6 +1063,18 @@ void initWebSocket()
             {
                 AwsFrameInfo *info = (AwsFrameInfo*)arg;
                 if (info->opcode == WS_TEXT) {
+                    if (info->len > WS_MAX_INCOMING_MESSAGE_SIZE) {
+                        LOG_W("WebSocket消息过大，关闭连接: ID=%u, 长度=%u", client->id(), info->len);
+                        client->close(1009, "payload too large");
+                        return;
+                    }
+
+                    if (!info->final || info->index != 0 || info->len != len) {
+                        LOG_W("WebSocket暂不支持分片文本帧: ID=%u, 索引=%u, 帧长=%u, 片段=%u", client->id(), info->index, info->len, len);
+                        client->close(1003, "fragmented payload unsupported");
+                        return;
+                    }
+
                     String msg = String((char*)data, len);
 
                     JsonDocument req;
@@ -1026,13 +1128,17 @@ void initWebSocket()
  */
 void cleanupWebSocket()
 {
-    if (ws != nullptr)
+    AsyncWebSocket *currentWs = ws;
+    ws = nullptr;
+
+    if (currentWs != nullptr)
     {
-        ws->closeAll();
-        delete ws;
-        ws = nullptr;
+        currentWs->cleanupClients();
+        currentWs->closeAll();
+        delete currentWs;
         portENTER_CRITICAL(&logCacheMux);
         logCache.clear();
+        logSessionId = generateLogSessionId();
         nextLogId = 1;
         portEXIT_CRITICAL(&logCacheMux);
         LOG_I("WebSocket服务器已清理，断开所有客户端");
@@ -2090,11 +2196,13 @@ void broadcastLogToWebSocket(int level, const char *tag, const char *message)
         return;
 
     unsigned long timestamp = millis();
+    uint32_t currentSessionId = logSessionId;
     uint32_t logId = 0;
 
     portENTER_CRITICAL(&logCacheMux);
+    currentSessionId = logSessionId;
     logId = nextLogId++;
-    logCache.push_back(LogEntry(logId, level, tag, message, timestamp));
+    logCache.push_back(LogEntry(currentSessionId, logId, level, tag, message, timestamp));
     if (logCache.size() > LOG_CACHE_SIZE)
     {
         logCache.pop_front();
@@ -2103,14 +2211,19 @@ void broadcastLogToWebSocket(int level, const char *tag, const char *message)
 
     // 构建单条日志JSON
     JsonDocument doc;
+    doc["sessionId"] = currentSessionId;
     doc["id"] = logId;
     doc["level"] = level;
     doc["tag"] = tag;
     doc["message"] = message;
     doc["timestamp"] = timestamp;
 
-    String response;
-    serializeJson(doc, response);
+    char response[LOG_SINGLE_ENTRY_JSON_BUFFER_SIZE];
+    const size_t responseLength = serializeJson(doc, response, sizeof(response));
+    if (responseLength == 0 || responseLength >= sizeof(response))
+    {
+        return;
+    }
 
-    ws->textAll(response);
+    broadcastWsTextBuffer(response, responseLength);
 }

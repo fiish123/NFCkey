@@ -531,9 +531,12 @@ function handleFetchError(err) {
 let ws = null;
 let wsReconnectTimer = null;
 let wsReconnectAttempts = 0;
+let wsReconnectEnabled = true;
+let wsActiveConnectionId = 0;
 const WS_MAX_RECONNECT_ATTEMPTS = 10;
 const WS_RECONNECT_DELAY = 3000;
 const LOG_REPLAY_STORAGE_KEY = 'logLastId';
+const LOG_SESSION_STORAGE_KEY = 'logSessionId';
 const LOG_MAX_ENTRIES = 500;
 const LOG_DEDUPE_WINDOW = 1000;
 const LOG_LEVEL_LABELS = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'VERBOSE'];
@@ -564,6 +567,11 @@ let unreadLogs = [];
 let recentLogIds = [];
 let seenLogIds = new Set();
 let latestLogId = 0;
+let activeLogSessionId = null;
+let latestDeviceLogTimestamp = null;
+let latestBrowserLogTimestamp = null;
+let timestampAnchorSessionId = null;
+let lastRenderedSessionId = null;
 
 const LOG_HISTORY_STORAGE_KEY = 'logHistorySnapshot';
 
@@ -1143,15 +1151,61 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // 初始化 WebSocket 连接
-function initWebSocket() {
-    // 获取当前页面的协议（ws 或 wss）
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
+function clearWsReconnectTimer() {
     if (wsReconnectTimer) {
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = null;
     }
+}
+
+function cleanupWsSocket(socket, shouldClose = false) {
+    if (!socket) {
+        return;
+    }
+
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+
+    if (shouldClose && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
+        try {
+            socket.close();
+        } catch (error) {
+            console.warn('关闭旧 WebSocket 失败:', error);
+        }
+    }
+}
+
+function scheduleWsReconnect() {
+    if (!wsReconnectEnabled || wsReconnectTimer || wsReconnectAttempts >= WS_MAX_RECONNECT_ATTEMPTS) {
+        return;
+    }
+
+    wsReconnectAttempts += 1;
+    console.log(`尝试重连 (${wsReconnectAttempts}/${WS_MAX_RECONNECT_ATTEMPTS})...`);
+    updateConnectionStatus(false, {
+        state: WS_STATE.RECONNECTING,
+        attempt: wsReconnectAttempts,
+        reason: ''
+    });
+
+    wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        initWebSocket();
+    }, WS_RECONNECT_DELAY);
+}
+
+function initWebSocket() {
+    // 获取当前页面的协议（ws 或 wss）
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const previousSocket = ws;
+    const connectionId = ++wsActiveConnectionId;
+
+    clearWsReconnectTimer();
+    wsReconnectEnabled = true;
+    cleanupWsSocket(previousSocket, true);
 
     updateConnectionStatus(false, {
         state: wsReconnectAttempts > 0 ? WS_STATE.RECONNECTING : WS_STATE.CONNECTING,
@@ -1160,9 +1214,15 @@ function initWebSocket() {
     });
     
     try {
-        ws = new WebSocket(wsUrl);
+        const socket = new WebSocket(wsUrl);
+        ws = socket;
         
-        ws.onopen = function() {
+        socket.onopen = function() {
+            if (socket !== ws || connectionId !== wsActiveConnectionId) {
+                cleanupWsSocket(socket, true);
+                return;
+            }
+
             console.log('WebSocket 连接成功');
             wsReconnectAttempts = 0;
             updateConnectionStatus(true, {
@@ -1175,7 +1235,11 @@ function initWebSocket() {
             document.dispatchEvent(new CustomEvent('ws-connected'));
         };
         
-        ws.onmessage = function(event) {
+        socket.onmessage = function(event) {
+            if (socket !== ws || connectionId !== wsActiveConnectionId) {
+                return;
+            }
+
             try {
                 const data = JSON.parse(event.data);
                 
@@ -1226,7 +1290,11 @@ function initWebSocket() {
             }
         };
         
-        ws.onerror = function(error) {
+        socket.onerror = function(error) {
+            if (socket !== ws || connectionId !== wsActiveConnectionId) {
+                return;
+            }
+
             console.error('WebSocket 错误:', error);
             if (wsConnectionState.state === WS_STATE.CONNECTING) {
                 updateConnectionStatus(false, {
@@ -1237,23 +1305,26 @@ function initWebSocket() {
             }
         };
         
-        ws.onclose = function(event) {
+        socket.onclose = function(event) {
+            if (socket === ws) {
+                ws = null;
+            }
+
+            if (connectionId !== wsActiveConnectionId) {
+                return;
+            }
+
             console.log('WebSocket 连接关闭:', event.code, event.reason);
             rejectPendingWsRequests(`WebSocket 已断开 (${event.code || 'unknown'})`);
             
             // 尝试重连
-            if (wsReconnectAttempts < WS_MAX_RECONNECT_ATTEMPTS) {
-                wsReconnectAttempts++;
-                console.log(`尝试重连 (${wsReconnectAttempts}/${WS_MAX_RECONNECT_ATTEMPTS})...`);
+            if (wsReconnectEnabled && wsReconnectAttempts < WS_MAX_RECONNECT_ATTEMPTS) {
                 updateConnectionStatus(false, {
                     state: WS_STATE.RECONNECTING,
-                    attempt: wsReconnectAttempts,
+                    attempt: wsReconnectAttempts + 1,
                     reason: event.reason || ''
                 });
-                
-                wsReconnectTimer = setTimeout(() => {
-                    initWebSocket();
-                }, WS_RECONNECT_DELAY);
+                scheduleWsReconnect();
             } else {
                 updateConnectionStatus(false, {
                     state: WS_STATE.DISCONNECTED,
@@ -1275,21 +1346,20 @@ function initWebSocket() {
 
 // 关闭 WebSocket 连接
 function closeWebSocket() {
-    if (wsReconnectTimer) {
-        clearTimeout(wsReconnectTimer);
-        wsReconnectTimer = null;
-    }
+    wsReconnectEnabled = false;
+    clearWsReconnectTimer();
     
     if (ws) {
-        ws.close();
+        const currentSocket = ws;
         ws = null;
+        cleanupWsSocket(currentSocket, true);
     }
     
-    wsReconnectAttempts = WS_MAX_RECONNECT_ATTEMPTS; // 防止自动重连
+    wsReconnectAttempts = 0;
     rejectPendingWsRequests('WebSocket 已手动关闭');
     updateConnectionStatus(false, {
         state: WS_STATE.DISCONNECTED,
-        attempt: wsReconnectAttempts,
+        attempt: 0,
         reason: '连接已关闭'
     });
 }
@@ -1310,6 +1380,21 @@ function getStoredLastLogId() {
     return parsedValue;
 }
 
+function getStoredLogSessionId() {
+    const rawValue = sessionStorage.getItem(LOG_SESSION_STORAGE_KEY);
+    if (rawValue === null) {
+        return null;
+    }
+
+    const parsedValue = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        sessionStorage.removeItem(LOG_SESSION_STORAGE_KEY);
+        return null;
+    }
+
+    return parsedValue;
+}
+
 function storeLastLogId(logId) {
     if (!Number.isFinite(logId) || logId <= 0) {
         return;
@@ -1319,6 +1404,17 @@ function storeLastLogId(logId) {
     sessionStorage.setItem(LOG_REPLAY_STORAGE_KEY, String(latestLogId));
 }
 
+function storeLogSessionId(sessionId) {
+    if (!Number.isFinite(sessionId) || sessionId <= 0) {
+        activeLogSessionId = null;
+        sessionStorage.removeItem(LOG_SESSION_STORAGE_KEY);
+        return;
+    }
+
+    activeLogSessionId = sessionId;
+    sessionStorage.setItem(LOG_SESSION_STORAGE_KEY, String(sessionId));
+}
+
 function resetReplayCursor() {
     latestLogId = 0;
     recentLogIds = [];
@@ -1326,8 +1422,58 @@ function resetReplayCursor() {
     sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
 }
 
+function resetLogTimestampAnchor(sessionId = null) {
+    timestampAnchorSessionId = sessionId;
+    latestDeviceLogTimestamp = null;
+    latestBrowserLogTimestamp = null;
+}
+
+function normalizeLogSessionId(sessionId) {
+    if (sessionId === undefined || sessionId === null) {
+        return null;
+    }
+
+    const parsedValue = Number(sessionId);
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        return null;
+    }
+
+    return parsedValue;
+}
+
+function getLogIdentity(logData) {
+    const logId = normalizeLogId(logData);
+    if (logId === null) {
+        return null;
+    }
+
+    const logSessionId = normalizeLogSessionId(logData?.sessionId);
+    return logSessionId !== null ? `${logSessionId}:${logId}` : String(logId);
+}
+
+function normalizeLogSession(logData, fallbackSessionId = activeLogSessionId) {
+    if (!logData || typeof logData !== 'object') {
+        return null;
+    }
+
+    const normalizedSessionId = normalizeLogSessionId(logData.sessionId);
+    if (normalizedSessionId !== null) {
+        logData.sessionId = normalizedSessionId;
+        return normalizedSessionId;
+    }
+
+    if (fallbackSessionId !== null) {
+        logData.sessionId = fallbackSessionId;
+        return fallbackSessionId;
+    }
+
+    delete logData.sessionId;
+    return null;
+}
+
 function persistLogHistory() {
     const snapshot = {
+        sessionId: activeLogSessionId,
         logs: allLogs.slice(-LOG_MAX_ENTRIES),
         unreadLogs: unreadLogs.slice(-LOG_MAX_ENTRIES)
     };
@@ -1349,23 +1495,35 @@ function restorePersistedLogHistory() {
         const snapshot = JSON.parse(rawValue);
         const restoredLogs = Array.isArray(snapshot?.logs) ? snapshot.logs.slice(-LOG_MAX_ENTRIES) : [];
         const restoredUnreadLogs = Array.isArray(snapshot?.unreadLogs) ? snapshot.unreadLogs.slice(-LOG_MAX_ENTRIES) : [];
+        const restoredSessionId = normalizeLogSessionId(snapshot?.sessionId) ?? getStoredLogSessionId();
 
         allLogs = restoredLogs;
         unreadLogs = restoredUnreadLogs;
+        storeLogSessionId(restoredSessionId);
+        resetLogTimestampAnchor();
+
+        allLogs.forEach((logData) => {
+            normalizeLogSession(logData, restoredSessionId);
+            logData.browserTimestamp = resolveLogBrowserTimestamp(logData);
+        });
+
+        unreadLogs.forEach((logData) => {
+            normalizeLogSession(logData, restoredSessionId);
+            logData.browserTimestamp = resolveLogBrowserTimestamp(logData);
+        });
 
         resetReplayCursor();
         allLogs.forEach((logData) => {
-            const logId = normalizeLogId(logData);
-            if (logId !== null) {
-                rememberLogId(logId);
-            }
+            rememberLogId(logData);
         });
     } catch (error) {
         console.warn('恢复日志历史失败:', error);
         sessionStorage.removeItem(LOG_HISTORY_STORAGE_KEY);
         allLogs = [];
         unreadLogs = [];
+        storeLogSessionId(null);
         resetReplayCursor();
+        resetLogTimestampAnchor();
     }
 }
 
@@ -1382,57 +1540,97 @@ function normalizeLogId(logData) {
     return parsedValue;
 }
 
-function rememberLogId(logId) {
-    if (!Number.isFinite(logId) || logId <= 0) {
+function rememberLogId(logData) {
+    const logId = normalizeLogId(logData);
+    if (logId === null) {
         return;
     }
 
-    if (seenLogIds.has(logId)) {
+    const logIdentity = getLogIdentity(logData);
+    if (logIdentity === null || seenLogIds.has(logIdentity)) {
         return;
     }
 
-    seenLogIds.add(logId);
-    recentLogIds.push(logId);
+    seenLogIds.add(logIdentity);
+    recentLogIds.push(logIdentity);
 
     if (recentLogIds.length > LOG_DEDUPE_WINDOW) {
-        const removedLogId = recentLogIds.shift();
-        seenLogIds.delete(removedLogId);
+        const removedLogIdentity = recentLogIds.shift();
+        seenLogIds.delete(removedLogIdentity);
     }
 
-    storeLastLogId(logId);
+    if (normalizeLogSessionId(logData.sessionId) === activeLogSessionId) {
+        storeLastLogId(logId);
+    }
 }
 
-function requestLogReplay() {
+async function requestLogReplay() {
     const lastLogId = getStoredLastLogId();
+    const storedSessionId = getStoredLogSessionId();
+    const previousSessionId = activeLogSessionId ?? storedSessionId;
     const replayRequest = {};
 
-    if (lastLogId !== null) {
+    if (lastLogId !== null && previousSessionId !== null) {
         replayRequest.lastLogId = lastLogId;
+        replayRequest.sessionId = previousSessionId;
     }
 
-    sendWsRequest('log/replay', replayRequest, 10000)
-        .then((data) => {
-            const replayLogs = data && Array.isArray(data.logs) ? data.logs : [];
+    try {
+        const data = await sendWsRequest('log/replay', replayRequest, 10000);
+        const replayLogs = data && Array.isArray(data.logs) ? data.logs : [];
+        const replaySessionId = normalizeLogSessionId(data?.sessionId);
+        const sessionChanged = replaySessionId !== null && previousSessionId !== null && replaySessionId !== previousSessionId;
+        const hasCachedLogs = allLogs.length > 0 || unreadLogs.length > 0;
 
-            if (data && data.mode === 'fallback' && typeof data.requestedLastLogId === 'number' && typeof data.latestAvailableLogId === 'number' && data.requestedLastLogId > data.latestAvailableLogId) {
+        if (sessionChanged) {
+            const shouldClearLogs = !hasCachedLogs || await showConfirm(
+                '检测到设备日志已重新开始，是否清空上次缓存的日志记录？<br><br>清空后将只保留本次启动后的日志。',
+                {
+                    type: 'warning',
+                    title: '检测到设备已重启',
+                    confirmText: '清空旧日志',
+                    cancelText: '保留旧日志',
+                    backdrop: true
+                }
+            );
+
+            if (shouldClearLogs) {
+                clearLogs({ preserveReplayCursor: false, preserveSession: false });
+            } else {
                 resetReplayCursor();
+                resetLogTimestampAnchor();
+                storeLogSessionId(replaySessionId);
             }
+        } else if (replaySessionId !== null && activeLogSessionId === null) {
+            storeLogSessionId(replaySessionId);
+        }
 
-            replayLogs.forEach((log) => {
-                addLogEntry(log);
-            });
+        if (data && data.mode === 'fallback' && typeof data.requestedLastLogId === 'number' && typeof data.latestAvailableLogId === 'number' && data.requestedLastLogId > data.latestAvailableLogId) {
+            resetReplayCursor();
+        }
 
-            if (data && data.mode === 'fallback' && replayLogs.length > 0) {
-                console.info('日志回放降级为最近窗口:', {
-                    requestedLastLogId: data.requestedLastLogId,
-                    oldestAvailableLogId: data.oldestAvailableLogId,
-                    latestAvailableLogId: data.latestAvailableLogId
-                });
+        replayLogs.forEach((log) => {
+            if (replaySessionId !== null && normalizeLogSessionId(log.sessionId) === null) {
+                log.sessionId = replaySessionId;
             }
-        })
-        .catch((error) => {
-            console.error('请求日志回放失败:', error);
+            addLogEntry(log);
         });
+
+        if (replaySessionId !== null) {
+            storeLogSessionId(replaySessionId);
+        }
+
+        if (data && data.mode === 'fallback' && replayLogs.length > 0) {
+            console.info('日志回放降级为最近窗口:', {
+                requestedLastLogId: data.requestedLastLogId,
+                oldestAvailableLogId: data.oldestAvailableLogId,
+                latestAvailableLogId: data.latestAvailableLogId,
+                sessionId: replaySessionId
+            });
+        }
+    } catch (error) {
+        console.error('请求日志回放失败:', error);
+    }
 }
 
 // 判断日志是否应该显示
@@ -1454,14 +1652,22 @@ function shouldShowLog(logLevel, filterLevel) {
 
 // 添加日志条目
 function addLogEntry(logData) {
-    const logId = normalizeLogId(logData);
-    if (logId !== null && seenLogIds.has(logId)) {
+    const fallbackSessionId = activeLogSessionId ?? getStoredLogSessionId();
+    const logSessionId = normalizeLogSession(logData, fallbackSessionId);
+    const logIdentity = getLogIdentity(logData);
+
+    if (logIdentity !== null && seenLogIds.has(logIdentity)) {
         return;
     }
 
-    if (logId !== null) {
-        rememberLogId(logId);
+    if (logSessionId !== null && logSessionId !== activeLogSessionId) {
+        storeLogSessionId(logSessionId);
+        resetLogTimestampAnchor(logSessionId);
     }
+
+    rememberLogId(logData);
+
+    logData.browserTimestamp = resolveLogBrowserTimestamp(logData);
 
     // 存储到数组
     allLogs.push(logData);
@@ -1499,17 +1705,23 @@ function renderLogEntry(logData) {
     const logOutput = document.getElementById('log-output');
     if (!logOutput) return;
     const shouldStickToBottom = isNearLogBottom(logOutput);
-    
+    const currentSessionId = normalizeLogSessionId(logData.sessionId);
+
+    if (shouldRenderSessionDivider(lastRenderedSessionId, currentSessionId)) {
+        const divider = createSessionDivider();
+        logOutput.appendChild(divider);
+    }
+
     // 创建日志元素
     const entry = document.createElement('div');
     entry.className = `log-entry ${getLogClass(logData.level)}`;
-    
+
     // 格式化时间戳
-    const time = formatTimestamp(logData.timestamp);
+    const time = formatTimestamp(logData.browserTimestamp);
     const levelLabel = getLogLevelLabel(logData.level);
     const tagLabel = escapeHtml(logData.tag || 'SYSTEM');
     const message = escapeHtml(logData.message || '');
-    
+
     entry.innerHTML = `
         <div class="log-entry-meta">
             <span class="log-level-badge">${levelLabel}</span>
@@ -1518,30 +1730,76 @@ function renderLogEntry(logData) {
         </div>
         <div class="log-message">${message}</div>
     `;
-    
+
     logOutput.appendChild(entry);
-    
+
+    if (currentSessionId !== null) {
+        lastRenderedSessionId = currentSessionId;
+    }
+
     // 自动滚动到底部
     if (shouldStickToBottom) {
         scrollToBottom();
     }
 }
 
+function createSessionDivider() {
+    const divider = document.createElement('div');
+    divider.className = 'log-session-divider';
+    divider.innerHTML = `
+        <div class="divider-label">当前启动日志</div>
+    `;
+    return divider;
+}
+
+function shouldRenderSessionDivider(previousSessionId, currentSessionId) {
+    return currentSessionId !== null && previousSessionId !== null && currentSessionId !== previousSessionId && activeLogSessionId !== null && currentSessionId === activeLogSessionId;
+}
+
 // 重新渲染所有日志（用于过滤级别变化）
 function renderLogs() {
     const logOutput = document.getElementById('log-output');
     if (!logOutput) return;
-    
+
     // 清空当前显示
     logOutput.innerHTML = '';
-    
+    lastRenderedSessionId = null;
+
     // 根据当前过滤级别重新渲染
     allLogs.forEach(logData => {
         if (shouldShowLog(logData.level, currentFilterLevel)) {
-            renderLogEntry(logData);
+            const currentSessionId = normalizeLogSessionId(logData.sessionId);
+
+            if (shouldRenderSessionDivider(lastRenderedSessionId, currentSessionId)) {
+                const divider = createSessionDivider();
+                logOutput.appendChild(divider);
+            }
+
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${getLogClass(logData.level)}`;
+
+            const time = formatTimestamp(logData.browserTimestamp);
+            const levelLabel = getLogLevelLabel(logData.level);
+            const tagLabel = escapeHtml(logData.tag || 'SYSTEM');
+            const message = escapeHtml(logData.message || '');
+
+            entry.innerHTML = `
+                <div class="log-entry-meta">
+                    <span class="log-level-badge">${levelLabel}</span>
+                    <span class="log-time">${time}</span>
+                    <span class="log-tag">${tagLabel}</span>
+                </div>
+                <div class="log-message">${message}</div>
+            `;
+
+            logOutput.appendChild(entry);
+
+            if (currentSessionId !== null) {
+                lastRenderedSessionId = currentSessionId;
+            }
         }
     });
-    
+
     // 滚动到底部
     scrollToBottom();
 
@@ -1570,6 +1828,49 @@ function formatTimestamp(timestamp) {
     const seconds = String(date.getSeconds()).padStart(2, '0');
     
     return `${hours}:${minutes}:${seconds}`;
+}
+
+function normalizeLogTimestamp(timestamp) {
+    if (timestamp === undefined || timestamp === null) {
+        return null;
+    }
+
+    const parsedTimestamp = Number(timestamp);
+    if (!Number.isFinite(parsedTimestamp) || parsedTimestamp < 0) {
+        return null;
+    }
+
+    return parsedTimestamp;
+}
+
+function resolveLogBrowserTimestamp(logData) {
+    const storedBrowserTimestamp = normalizeLogTimestamp(logData.browserTimestamp);
+    if (storedBrowserTimestamp !== null) {
+        return storedBrowserTimestamp;
+    }
+
+    const logSessionId = normalizeLogSession(logData, activeLogSessionId);
+    const deviceTimestamp = normalizeLogTimestamp(logData.timestamp);
+    const browserNow = Date.now();
+
+    if (logSessionId !== null && timestampAnchorSessionId !== logSessionId) {
+        resetLogTimestampAnchor(logSessionId);
+    }
+
+    if (deviceTimestamp === null) {
+        return browserNow;
+    }
+
+    if (latestDeviceLogTimestamp === null || deviceTimestamp >= latestDeviceLogTimestamp) {
+        latestDeviceLogTimestamp = deviceTimestamp;
+        latestBrowserLogTimestamp = browserNow;
+    }
+
+    if (latestBrowserLogTimestamp === null || latestDeviceLogTimestamp === null) {
+        return browserNow;
+    }
+
+    return latestBrowserLogTimestamp - (latestDeviceLogTimestamp - deviceTimestamp);
 }
 
 function getLogLevelLabel(level) {
@@ -1625,7 +1926,9 @@ function setLogFilter(level) {
 }
 
 // 清空日志
-function clearLogs() {
+function clearLogs(options = {}) {
+    const preserveReplayCursor = options.preserveReplayCursor !== false;
+    const preserveSession = options.preserveSession !== false;
     const logOutput = document.getElementById('log-output');
     if (logOutput) {
         logOutput.innerHTML = '';
@@ -1636,10 +1939,19 @@ function clearLogs() {
     unreadLogs = [];
     recentLogIds = [];
     seenLogIds = new Set();
+    lastRenderedSessionId = null;
     sessionStorage.removeItem(LOG_HISTORY_STORAGE_KEY);
-    if (latestLogId > 0) {
+
+    if (!preserveSession) {
+        storeLogSessionId(null);
+    }
+
+    resetLogTimestampAnchor(preserveSession ? activeLogSessionId : null);
+
+    if (preserveReplayCursor && latestLogId > 0) {
         storeLastLogId(latestLogId);
     } else {
+        latestLogId = 0;
         sessionStorage.removeItem(LOG_REPLAY_STORAGE_KEY);
     }
     

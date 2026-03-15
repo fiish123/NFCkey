@@ -6,6 +6,7 @@
 #include <Update.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <stdio.h>
 #include "logger.h"
 #include <Preferences.h>
 #include "esp_task_wdt.h"
@@ -119,16 +120,40 @@ extern bool cardLogicEnabled;
 float read_battery_voltage();
 
 // 日志缓存结构体
+static constexpr size_t LOG_TAG_BUFFER_SIZE = 16;
+static constexpr size_t LOG_MESSAGE_BUFFER_SIZE = 128;
+
 struct LogEntry
 {
+    uint32_t sessionId;
     uint32_t id;
     int level;
-    String tag;
-    String message;
+    char tag[LOG_TAG_BUFFER_SIZE];
+    char message[LOG_MESSAGE_BUFFER_SIZE];
     unsigned long timestamp;
 
-    LogEntry(uint32_t logId, int l, const char *t, const char *m, unsigned long ts)
-        : id(logId), level(l), tag(t), message(m), timestamp(ts) {}
+    LogEntry() : sessionId(0), id(0), level(0), timestamp(0)
+    {
+        tag[0] = '\0';
+        message[0] = '\0';
+    }
+
+    LogEntry(uint32_t logSessionId, uint32_t logId, int l, const char *t, const char *m, unsigned long ts)
+        : sessionId(logSessionId), id(logId), level(l), timestamp(ts)
+    {
+        copyText(tag, sizeof(tag), t);
+        copyText(message, sizeof(message), m);
+    }
+
+private:
+    static void copyText(char *target, size_t targetSize, const char *source)
+    {
+        if (targetSize == 0)
+            return;
+
+        const char *safeSource = source ? source : "";
+        snprintf(target, targetSize, "%s", safeSource);
+    }
 };
 
 // WebSocket 日志相关函数

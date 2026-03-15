@@ -1834,6 +1834,39 @@ h2 {
     opacity: 0.6;
 }
 
+.log-session-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) 0;
+    margin: var(--spacing-sm) 0;
+    border-top: 1px dashed var(--color-border);
+    border-bottom: 1px dashed var(--color-border);
+    background: linear-gradient(135deg, rgba(236, 254, 255, 0.6) 0%, rgba(255, 255, 255, 0.4) 100%);
+}
+
+.log-session-divider .divider-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 var(--spacing-sm);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.log-session-divider .divider-label::before,
+.log-session-divider .divider-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+    min-width: 12px;
+}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
     .log-header {
