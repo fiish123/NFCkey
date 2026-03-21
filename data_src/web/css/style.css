@@ -251,9 +251,9 @@ h2 {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--spacing-md);
+    gap: var(--spacing-sm);
     margin: var(--spacing-lg) 0;
-    padding: var(--spacing-lg);
+    padding: var(--spacing-md);
     background: linear-gradient(135deg, rgba(236, 254, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%);
     backdrop-filter: blur(16px);
     border-radius: var(--radius-lg);
@@ -273,70 +273,88 @@ h2 {
     background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
 }
 
-.path-bar span {
-    color: var(--color-primary);
-    font-weight: 600;
-    font-size: 14px;
-    white-space: nowrap;
+.path-bar .btn-sm {
+    min-height: 40px;
+    padding: 10px 16px;
+}
+
+.path-bar .path-btn {
+    min-width: 44px;
+    padding: 10px 14px;
+}
+
+.path-bar .path-btn svg {
+    margin-right: 0;
+}
+
+.path-bar .path-btn-parent {
+    background: linear-gradient(135deg, #64748B 0%, #475569 100%);
+}
+
+.path-bar .path-btn-parent:hover {
+    background: linear-gradient(135deg, #475569 0%, #334155 100%);
+    box-shadow: var(--shadow-md), 0 0 15px rgba(71, 85, 105, 0.25);
+}
+
+.path-bar .path-btn-parent:focus-visible {
+    outline: 3px solid rgba(100, 116, 139, 0.2);
+}
+
+.path-bar .path-btn-create {
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+}
+
+.path-bar .path-btn-create:hover {
+    background: linear-gradient(135deg, var(--color-primary-hover) 0%, #155E75 100%);
+    box-shadow: var(--shadow-md), 0 0 15px rgba(8, 145, 178, 0.28);
+}
+
+.path-bar .path-btn-create:focus-visible {
+    outline: 3px solid var(--color-primary-light);
+}
+
+.path-chip {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
-}
-
-.path-bar span::before {
-    content: '';
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230891B2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'%3E%3C/path%3E%3Cpolyline points='9 22 9 12 15 12 15 22'%3E%3C/polyline%3E%3C/svg%3E");
-    background-size: contain;
-    background-repeat: no-repeat;
-}
-
-.path-bar input {
-    flex: 1;
-    min-width: 200px;
-    padding: 12px 16px;
+    padding: 8px 14px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 250, 252, 0.9) 100%);
     border: 2px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.9);
-    color: var(--color-text);
-    font-family: var(--font-heading);
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
+    border-radius: var(--radius-md);
     transition: var(--transition-base);
     box-shadow: var(--shadow-inner);
-    cursor: default;
 }
 
-.path-bar input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 4px var(--color-primary-light), var(--shadow-sm);
-}
-
-.path-bar input[readonly] {
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.8) 100%);
-    color: var(--color-text-secondary);
-}
-
-.path-bar .btn {
-    padding: 12px 20px;
-    font-size: 13px;
-    font-weight: 600;
-    min-height: 44px;
-    border-radius: var(--radius-sm);
+.path-chip:hover {
+    border-color: var(--color-border-hover);
     box-shadow: var(--shadow-sm);
 }
 
-.path-bar .btn:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+.path-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    color: var(--color-primary);
+    transition: var(--transition-base);
 }
 
-.path-bar .btn:active {
-    transform: translateY(0);
+.path-chip:hover .path-icon {
+    transform: scale(1.1);
+}
+
+.path-text {
+    flex: 1;
+    font-family: var(--font-heading);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 /* 存储信息 */
@@ -1007,16 +1025,17 @@ h2 {
     }
 
     .path-bar {
-        flex-direction: column;
+        flex-direction: row;
         align-items: stretch;
+        gap: var(--spacing-sm);
     }
 
-    .path-bar input {
-        width: 100%;
+    .path-bar .btn-sm {
+        flex-shrink: 0;
     }
 
-    .path-bar .btn {
-        width: 100%;
+    .path-chip {
+        min-width: 0;
     }
 
     .item {

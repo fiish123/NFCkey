@@ -7,6 +7,7 @@
 #include "web_server.h"
 
 #include <deque>
+#include <mbedtls/sha256.h>
 
 extern "C"
 {
@@ -77,6 +78,42 @@ static WebServerConfig serverConfig = {
 
 // 文件上传状态管理（类型来自头文件）
 static FileUploadState uploadState;
+static constexpr size_t OTA_SHA256_HEX_LENGTH = 64;
+static constexpr size_t OTA_SHA256_BYTES = 32;
+static const char *OTA_HASH_HEADER = "X-Firmware-SHA256";
+static const char *FILE_HASH_HEADER = "X-File-SHA256";
+
+struct OtaUploadState
+{
+    bool active;
+    bool finalSeen;
+    bool success;
+    bool error;
+    bool hashProvided;
+    bool hashFormatInvalid;
+    bool hashMismatch;
+    String expectedSha256;
+
+    void reset()
+    {
+        active = false;
+        finalSeen = false;
+        success = false;
+        error = false;
+        hashProvided = false;
+        hashFormatInvalid = false;
+        hashMismatch = false;
+        expectedSha256 = "";
+    }
+};
+
+static OtaUploadState otaUploadState;
+static mbedtls_sha256_context otaSha256Context;
+static bool otaSha256ContextActive = false;
+static mbedtls_sha256_context fileUploadSha256Context;
+static bool fileUploadSha256ContextActive = false;
+static String fileUploadTargetPath = "";
+static String fileUploadTempPath = "";
 
 // WiFi测试状态管理（仍用于异步任务协调）
 static bool wifiTestRunning = false;
@@ -88,6 +125,10 @@ static uint32_t wifiTestRequestId = 0; // 请求ID
 
 // WiFi扫描状态管理
 static bool wifiScanRunning = false;
+static bool restartScheduled = false;
+static uint32_t restartScheduledAtMs = 0;
+static uint32_t restartDelayMs = 0;
+static const char *restartReason = "unknown";
 
 // WiFi测试参数结构体
 struct WifiTestParams
@@ -180,6 +221,195 @@ bool validateOtaFileSize(size_t size)
     return size <= 2097152;
 }
 
+static bool isLowerHexString(const String &value, size_t expectedLength)
+{
+    if (value.length() != expectedLength)
+        return false;
+
+    for (size_t i = 0; i < expectedLength; ++i)
+    {
+        if (!isxdigit(static_cast<unsigned char>(value[i])))
+            return false;
+    }
+
+    return true;
+}
+
+static void resetOtaHashContext()
+{
+    if (!otaSha256ContextActive)
+        return;
+
+    mbedtls_sha256_free(&otaSha256Context);
+    otaSha256ContextActive = false;
+}
+
+static void resetFileUploadHashContext()
+{
+    if (!fileUploadSha256ContextActive)
+        return;
+
+    mbedtls_sha256_free(&fileUploadSha256Context);
+    fileUploadSha256ContextActive = false;
+}
+
+static bool beginFileUploadHashContext()
+{
+    resetFileUploadHashContext();
+    mbedtls_sha256_init(&fileUploadSha256Context);
+
+    if (mbedtls_sha256_starts_ret(&fileUploadSha256Context, 0) != 0)
+    {
+        mbedtls_sha256_free(&fileUploadSha256Context);
+        return false;
+    }
+
+    fileUploadSha256ContextActive = true;
+    return true;
+}
+
+static bool updateFileUploadHashContext(const uint8_t *data, size_t len)
+{
+    if (!fileUploadSha256ContextActive)
+        return false;
+
+    if (mbedtls_sha256_update_ret(&fileUploadSha256Context, data, len) != 0)
+    {
+        resetFileUploadHashContext();
+        return false;
+    }
+
+    return true;
+}
+
+static bool finalizeFileUploadHash(String &outHash)
+{
+    if (!fileUploadSha256ContextActive)
+        return false;
+
+    unsigned char digest[OTA_SHA256_BYTES];
+    if (mbedtls_sha256_finish_ret(&fileUploadSha256Context, digest) != 0)
+    {
+        resetFileUploadHashContext();
+        return false;
+    }
+
+    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
+    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
+    {
+        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
+    }
+
+    outHash = digestHex;
+    resetFileUploadHashContext();
+    return true;
+}
+
+static void resetFileUploadState()
+{
+    resetFileUploadHashContext();
+    fileUploadTargetPath = "";
+    fileUploadTempPath = "";
+    uploadState.reset();
+}
+
+static void cleanupFileUploadTempFile()
+{
+    if (!fileUploadTempPath.isEmpty())
+    {
+        LittleFS.remove(fileUploadTempPath);
+    }
+}
+
+static void resetOtaUploadState()
+{
+    resetOtaHashContext();
+    otaUploadState.reset();
+}
+
+static bool beginOtaHashContext()
+{
+    resetOtaHashContext();
+    mbedtls_sha256_init(&otaSha256Context);
+
+    if (mbedtls_sha256_starts_ret(&otaSha256Context, 0) != 0)
+    {
+        mbedtls_sha256_free(&otaSha256Context);
+        return false;
+    }
+
+    otaSha256ContextActive = true;
+    return true;
+}
+
+static bool updateOtaHashContext(const uint8_t *data, size_t len)
+{
+    if (!otaSha256ContextActive)
+        return false;
+
+    if (mbedtls_sha256_update_ret(&otaSha256Context, data, len) != 0)
+    {
+        resetOtaHashContext();
+        return false;
+    }
+
+    return true;
+}
+
+static bool finalizeOtaHash(String &outHash)
+{
+    if (!otaSha256ContextActive)
+        return false;
+
+    unsigned char digest[OTA_SHA256_BYTES];
+    if (mbedtls_sha256_finish_ret(&otaSha256Context, digest) != 0)
+    {
+        resetOtaHashContext();
+        return false;
+    }
+
+    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
+    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
+    {
+        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
+    }
+
+    outHash = digestHex;
+    resetOtaHashContext();
+    return true;
+}
+
+static void scheduleSystemRestart(uint32_t delayMs, const char *reason)
+{
+    if (restartScheduled)
+    {
+        LOG_W("系统重启已在队列中，忽略重复请求: %s", reason ? reason : "unknown");
+        return;
+    }
+
+    restartScheduled = true;
+    restartScheduledAtMs = millis();
+    restartDelayMs = delayMs;
+    restartReason = reason ? reason : "unknown";
+}
+
+void serviceScheduledRestart()
+{
+    if (!restartScheduled)
+    {
+        return;
+    }
+
+    if (static_cast<uint32_t>(millis() - restartScheduledAtMs) < restartDelayMs)
+    {
+        return;
+    }
+
+    restartScheduled = false;
+    LOG_I("系统准备重启: %s", restartReason);
+    ESP.restart();
+}
+
 // =============================================================================
 // WiFi配置相关函数
 // =============================================================================
@@ -199,11 +429,11 @@ bool loadWifiConfig(String &ssid, String &password)
 
     if (ssid.length() == 0 || password.length() == 0)
     {
-        LOG_D("WiFi配置未保存，配置为空");
+        LOG_W("WiFi配置未保存，配置为空");
         return false;
     }
 
-    LOG_I("WiFi配置读取成功: SSID=%s", ssid.c_str());
+    LOG_D("WiFi配置读取成功: SSID=%s", ssid.c_str());
     return true;
 }
 
@@ -275,14 +505,19 @@ void startAPMode()
 // =============================================================================
 static bool connectToWiFi(const String &ssid, const String &password, int maxAttempts = 20, int delayMs = 500)
 {
+    LOG_I("开始连接WiFi: SSID=%s", ssid.c_str());
     WiFi.begin(ssid.c_str(), password.c_str());
     for (int i = 0; i < maxAttempts; i++)
     {
         if (WiFi.status() == WL_CONNECTED)
+        {
+            LOG_I("WiFi连接成功: SSID=%s, IP=%s", ssid.c_str(), WiFi.localIP().toString().c_str());
             return true;
+        }
         vTaskDelay(pdMS_TO_TICKS(delayMs));
         esp_task_wdt_reset();
     }
+    LOG_W("WiFi连接失败: SSID=%s, 状态码=%d", ssid.c_str(), WiFi.status());
     return false;
 }
 
@@ -452,6 +687,11 @@ static void sendWsResponse(AsyncWebSocketClient *client, const String &action, b
 static void sendWsError(AsyncWebSocketClient *client, const String &action,
                         const String &message, uint32_t requestId = 0)
 {
+    LOG_W("WebSocket请求失败: client=%u, action=%s, requestId=%u, message=%s",
+          client ? client->id() : 0,
+          action.c_str(),
+          requestId,
+          message.c_str());
     JsonDocument errData;
     errData["message"] = message;
     sendWsResponse(client, action, false, &errData, requestId);
@@ -701,6 +941,8 @@ void handleWsWifiClearConfig(AsyncWebSocketClient *client, const JsonDocument &r
  */
 void wifiScanTask(void *pvParameters)
 {
+    LOG_I("开始扫描WiFi网络");
+
     // 开始扫描
     int n = WiFi.scanComplete();
     if (n == WIFI_SCAN_RUNNING)
@@ -718,6 +960,7 @@ void wifiScanTask(void *pvParameters)
             break;
         vTaskDelay(pdMS_TO_TICKS(500));
     }
+
 
     JsonDocument doc;
     bool success = true;
@@ -741,6 +984,7 @@ void wifiScanTask(void *pvParameters)
     else if (n == 0)
     {
         // 未找到网络 - 返回空数组
+        LOG_D("WiFi扫描完成，未发现可用网络");
         doc.to<JsonArray>();
     }
     else
@@ -748,6 +992,12 @@ void wifiScanTask(void *pvParameters)
         // 扫描失败
         success = false;
         errorMessage = "扫描超时或失败";
+        LOG_W("WiFi扫描失败: %s", errorMessage.c_str());
+    }
+
+    if (n > 0)
+    {
+        LOG_I("WiFi扫描完成，发现 %d 个网络", n);
     }
 
     // 广播结果给所有客户端
@@ -872,18 +1122,15 @@ void wifiTestTask(void *pvParameters)
     // 断开当前连接
     WiFi.disconnect(true);
 
-    LOG_I("开始连接WiFi: SSID=%s", ssid.c_str());
     bool wifisuccess = false;
     String errorMessage = "";
 
     if (connectToWiFi(ssid, password, 20))
     {
-        LOG_I("WiFi连接成功: IP=%s", WiFi.localIP().toString().c_str());
         wifisuccess = true;
     }
     else
     {
-        LOG_D("WiFi连接失败: 错误码=%d, %s", WiFi.status(), errorMessage.c_str());
         WiFi.disconnect(true);
         switch (WiFi.status())
         {
@@ -897,6 +1144,7 @@ void wifiTestTask(void *pvParameters)
             errorMessage = "错误：连接超时";
             break;
         }
+        LOG_W("WiFi连接测试失败: SSID=%s, 错误码=%d, 原因=%s", ssid.c_str(), WiFi.status(), errorMessage.c_str());
     }
 
     // 准备结果数据
@@ -1113,14 +1361,20 @@ void initWebSocket()
             }
             case WS_EVT_ERROR:
             {
-                LOG_E("WebSocket错误: 客户端ID=%u, 错误码=%u", client->id(), type);
+                const uint16_t errorCode = (arg != nullptr) ? *reinterpret_cast<uint16_t *>(arg) : 0;
+                LOG_E("WebSocket错误: client=%u, error=%u, status=%d, queueFull=%s, dataLen=%u",
+                      client ? client->id() : 0,
+                      errorCode,
+                      client ? client->status() : 0,
+                      (client && client->queueIsFull()) ? "true" : "false",
+                      static_cast<unsigned int>(len));
                 break;
             }
             case WS_EVT_PONG:
                 break;
         } });
 
-    LOG_I("WebSocket服务器初始化完成: 路径=/ws");
+    LOG_D("WebSocket服务器初始化完成: 路径=/ws");
 }
 
 /**
@@ -1175,6 +1429,12 @@ void handleGetSystemInfo(AsyncWebServerRequest *request)
     snprintf(chipIdStr, sizeof(chipIdStr), "%016llX", chipId);
     doc["chipId"] = chipIdStr;
     doc["version"] = serverConfig.firmwareVersion;
+    doc["otaHashAlgorithm"] = "sha256";
+    doc["otaHashHeader"] = OTA_HASH_HEADER;
+    doc["otaHashRequired"] = false;
+    doc["fileHashAlgorithm"] = "sha256";
+    doc["fileHashHeader"] = FILE_HASH_HEADER;
+    doc["fileHashRequired"] = true;
     sendSuccessResponse(request, doc);
 }
 
@@ -1373,7 +1633,7 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
     // 无需互斥锁，因为回调在同一任务中串行执行
     if (!index)
     {
-        uploadState.reset(); // 确保清理之前的状态
+        resetFileUploadState(); // 确保清理之前的状态
         uploadState.active = true;
 
         String reqPath = request->hasParam("path") ? request->getParam("path")->value() : "/";
@@ -1381,27 +1641,64 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         if (!uploadState.path.endsWith("/"))
             uploadState.path += "/";
 
-        String fullPath = normalizePath(uploadState.path + filename);
-        LOG_I("文件上传开始: %s (Content-Length: %u bytes)", fullPath.c_str(), request->contentLength());
-
-        uint64_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
-        if (request->contentLength() > freeBytes)
+        File targetDir = LittleFS.open(uploadState.path);
+        if (!targetDir || !targetDir.isDirectory())
         {
-        LOG_W("文件上传被拒绝: 存储空间不足 (需要: %u, 可用: %u bytes)", request->contentLength(), freeBytes);
+            if (targetDir)
+                targetDir.close();
+            LOG_W("文件上传失败: 目标目录无效: %s", uploadState.path.c_str());
             uploadState.error = true;
-            uploadState.reset();
+            return;
+        }
+        targetDir.close();
+
+        fileUploadTargetPath = normalizePath(uploadState.path + filename);
+        fileUploadTempPath = fileUploadTargetPath + ".uploading";
+        LittleFS.remove(fileUploadTempPath);
+        LOG_I("文件上传开始: %s (Content-Length: %u bytes)", fileUploadTargetPath.c_str(), request->contentLength());
+
+        if (request->hasHeader(FILE_HASH_HEADER))
+        {
+            uploadState.expectedSha256 = request->getHeader(FILE_HASH_HEADER)->value();
+            uploadState.expectedSha256.trim();
+            uploadState.expectedSha256.toLowerCase();
+        }
+
+        if (uploadState.expectedSha256.isEmpty())
+        {
+            LOG_W("文件上传失败: 缺少文件哈希");
+            uploadState.error = true;
+            uploadState.hashFormatInvalid = true;
             return;
         }
 
-        uploadState.file = LittleFS.open(fullPath, "w");
+        uploadState.hashProvided = true;
+        if (!isLowerHexString(uploadState.expectedSha256, OTA_SHA256_HEX_LENGTH))
+        {
+            LOG_W("文件上传失败: 文件哈希格式无效");
+            uploadState.error = true;
+            uploadState.hashFormatInvalid = true;
+            return;
+        }
+
+        if (!beginFileUploadHashContext())
+        {
+            LOG_E("文件上传失败: 无法初始化哈希上下文");
+            uploadState.error = true;
+            return;
+        }
+
+        uploadState.file = LittleFS.open(fileUploadTempPath, "w");
         if (!uploadState.file)
         {
-            LOG_E("文件上传失败: 无法创建文件: %s", fullPath.c_str());
+            LOG_E("文件上传失败: 无法创建临时文件: %s", fileUploadTempPath.c_str());
             uploadState.error = true;
-            uploadState.reset();
             return;
         }
     }
+
+    if (uploadState.error)
+        return;
 
     if (uploadState.file && data && len > 0)
     {
@@ -1410,19 +1707,89 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         {
             LOG_E("文件上传失败: 写入错误，已删除临时文件");
             uploadState.file.close();
-            String fullPath = normalizePath(uploadState.path + filename);
-            LittleFS.remove(fullPath);
+            cleanupFileUploadTempFile();
             uploadState.error = true;
-            uploadState.reset();
             return;
         }
+
+        if (!updateFileUploadHashContext(data, len))
+        {
+            LOG_E("文件上传失败: 哈希计算错误，已删除临时文件");
+            uploadState.file.close();
+            cleanupFileUploadTempFile();
+            uploadState.error = true;
+            return;
+        }
+
         uploadsize += len;
+        uploadState.size += len;
     }
 
     if (final)
     {
+        uploadState.finalSeen = true;
+
+        String calculatedSha256;
+        if (!finalizeFileUploadHash(calculatedSha256))
+        {
+            LOG_E("文件上传失败: 无法完成哈希校验");
+            if (uploadState.file)
+                uploadState.file.close();
+            cleanupFileUploadTempFile();
+            uploadState.error = true;
+            return;
+        }
+
+        if (calculatedSha256 != uploadState.expectedSha256)
+        {
+            LOG_E("文件上传失败: 哈希校验不匹配");
+            if (uploadState.file)
+                uploadState.file.close();
+            cleanupFileUploadTempFile();
+            uploadState.hashMismatch = true;
+            uploadState.error = true;
+            return;
+        }
+
         if (uploadState.file)
             uploadState.file.close();
+
+        const String backupPath = fileUploadTargetPath + ".backup";
+        const bool targetExists = LittleFS.exists(fileUploadTargetPath);
+        if (targetExists)
+        {
+            LittleFS.remove(backupPath);
+            if (!LittleFS.rename(fileUploadTargetPath, backupPath))
+            {
+                LOG_E("文件上传失败: 无法备份原文件: %s", fileUploadTargetPath.c_str());
+                cleanupFileUploadTempFile();
+                uploadState.error = true;
+                return;
+            }
+        }
+
+        if (!LittleFS.rename(fileUploadTempPath, fileUploadTargetPath))
+        {
+            LOG_E("文件上传失败: 无法替换目标文件: %s", fileUploadTargetPath.c_str());
+            cleanupFileUploadTempFile();
+            if (targetExists)
+            {
+                if (!LittleFS.rename(backupPath, fileUploadTargetPath))
+                {
+                    LOG_E("文件上传回滚失败: 原文件仍保留在备份路径: %s", backupPath.c_str());
+                    uploadState.rollbackRestoreFailed = true;
+                }
+            }
+            uploadState.error = true;
+            return;
+        }
+
+        if (targetExists)
+        {
+            LittleFS.remove(backupPath);
+        }
+
+        uploadState.success = true;
         // 上传完成，状态将在 handleUploadFileComplete 中清理
     }
 }
@@ -1433,11 +1800,23 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
 void handleUploadFileComplete(AsyncWebServerRequest *request)
 {
     // 无需互斥锁
-    if (uploadState.error)
+    if (uploadState.hashFormatInvalid)
+    {
+        sendErrorResponse(request, 400, "文件哈希格式无效");
+    }
+    else if (uploadState.hashMismatch)
+    {
+        sendErrorResponse(request, 400, "文件哈希校验失败");
+    }
+    else if (uploadState.rollbackRestoreFailed)
+    {
+        sendErrorResponse(request, 500, "上传失败，原文件已保留在 .backup 文件中");
+    }
+    else if (uploadState.error)
     {
         sendErrorResponse(request, 500, "上传失败");
     }
-    else if (uploadState.active)
+    else if (uploadState.active && uploadState.finalSeen && uploadState.success)
     {
         LOG_I("文件上传完成: %u bytes", uploadsize);
 
@@ -1448,7 +1827,7 @@ void handleUploadFileComplete(AsyncWebServerRequest *request)
         sendErrorResponse(request, 400, "未进行上传");
     }
     uploadsize = 0;
-    uploadState.reset();
+    resetFileUploadState();
 }
 
 /**
@@ -1578,8 +1957,7 @@ void handleRestartSystem(AsyncWebServerRequest *request)
 {
     LOG_I("系统重启请求");
     sendSuccessResponse(request);
-    delay(500);
-    ESP.restart();
+    scheduleSystemRestart(500, "manual restart request");
 }
 
 /**
@@ -1596,36 +1974,99 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
 {
     if (!index)
     {
+        resetOtaUploadState();
+        otaUploadState.active = true;
         LOG_I("OTA固件更新开始: %s (大小: %u bytes)", filename.c_str(), request->contentLength());
         if (!validateOtaFileSize(request->contentLength()))
         {
+            otaUploadState.error = true;
             LOG_E("OTA更新失败: 固件大小超限 (最大2MB)");
             Update.abort();
             return;
         }
-        if (!Update.begin(request->contentLength()))
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
         {
+            otaUploadState.error = true;
             Update.printError(Serial);
             Update.abort();
             return;
         }
-        Update.onProgress([](size_t progress, size_t total)
-                          { LOG_D("OTA更新进度: %u%%", (progress * 100) / total); });
+
+        if (request->hasHeader(OTA_HASH_HEADER))
+        {
+            otaUploadState.expectedSha256 = request->getHeader(OTA_HASH_HEADER)->value();
+            otaUploadState.expectedSha256.trim();
+            otaUploadState.expectedSha256.toLowerCase();
+
+            if (!otaUploadState.expectedSha256.isEmpty())
+            {
+                otaUploadState.hashProvided = true;
+                if (!isLowerHexString(otaUploadState.expectedSha256, OTA_SHA256_HEX_LENGTH))
+                {
+                    otaUploadState.hashFormatInvalid = true;
+                    otaUploadState.error = true;
+                    Update.abort();
+                    return;
+                }
+
+                if (!beginOtaHashContext())
+                {
+                    otaUploadState.error = true;
+                    Update.abort();
+                    return;
+                }
+            }
+        }
     }
 
     if (Update.write(data, len) != len)
     {
+        otaUploadState.error = true;
         Update.printError(Serial);
         Update.abort();
         return;
     }
 
+    if (otaUploadState.hashProvided && len > 0 && !updateOtaHashContext(data, len))
+    {
+        otaUploadState.error = true;
+        Update.abort();
+        return;
+    }
+
+    esp_task_wdt_reset();
+
     if (final)
     {
+        otaUploadState.finalSeen = true;
+
+        if (otaUploadState.hashProvided)
+        {
+            String calculatedSha256;
+            if (!finalizeOtaHash(calculatedSha256))
+            {
+                otaUploadState.error = true;
+                Update.abort();
+                return;
+            }
+
+            if (calculatedSha256 != otaUploadState.expectedSha256)
+            {
+                otaUploadState.hashMismatch = true;
+                otaUploadState.error = true;
+                Update.abort();
+                return;
+            }
+        }
+
         if (Update.end(true))
+        {
+            otaUploadState.success = true;
             LOG_I("OTA固件更新成功，系统即将重启");
+        }
         else
         {
+            otaUploadState.error = true;
             Update.printError(Serial);
             Update.abort();
         }
@@ -1637,15 +2078,31 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
  */
 void handleOtaUpdateComplete(AsyncWebServerRequest *request)
 {
-    if (Update.hasError())
+    if (otaUploadState.hashFormatInvalid)
     {
+        resetOtaUploadState();
+        sendErrorResponse(request, 400, "固件哈希格式无效");
+    }
+    else if (otaUploadState.hashMismatch)
+    {
+        resetOtaUploadState();
+        sendErrorResponse(request, 400, "固件哈希校验失败");
+    }
+    else if (!otaUploadState.active || otaUploadState.error || Update.hasError())
+    {
+        resetOtaUploadState();
         sendErrorResponse(request, 500, "OTA更新失败");
+    }
+    else if (!otaUploadState.finalSeen || !otaUploadState.success)
+    {
+        resetOtaUploadState();
+        sendErrorResponse(request, 500, "OTA更新未完成");
     }
     else
     {
         sendSuccessResponse(request);
-        delay(1000);
-        ESP.restart();
+        resetOtaUploadState();
+        scheduleSystemRestart(1000, "ota update complete");
     }
 }
 
@@ -1834,6 +2291,7 @@ void handleReadCard(AsyncWebServerRequest *request)
 
     if (readResult.uidLength == 0)
     {
+        LOG_W("HTTP读卡超时: timeout=%lu ms, 串口缓存=%d字节", timeout, Serial1.available());
         sendErrorResponse(request, 404, "未读取到卡片，请将卡片放在读卡器上");
         return;
     }
@@ -1983,6 +2441,7 @@ void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, co
 
     if (acceptGzip && LittleFS.exists(gzPath))
     {
+        LOG_D("静态资源命中gzip版本: %s", gzPath.c_str());
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, gzPath, contentType);
         response->addHeader("Content-Encoding", "gzip");
         response->addHeader("Cache-Control", "public, max-age=1800");
@@ -1992,12 +2451,14 @@ void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, co
 
     if (LittleFS.exists(path))
     {
+        LOG_D("静态资源命中原始版本: %s", path.c_str());
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, path, contentType);
         response->addHeader("Cache-Control", "public, max-age=1800");
         request->send(response);
     }
     else
     {
+        LOG_W("静态资源不存在: %s", path.c_str());
         request->send(404, "text/plain", "File not found");
     }
 }
@@ -2114,8 +2575,7 @@ void initWebServer()
     if (connectToWiFi(savedSSID, savedPassword, 20))
     {
         addTolist(9);
-
-        LOG_I("WiFi连接成功，IP: %s", WiFi.localIP().toString().c_str());
+        
         wifisuccess = true;
     }
     else
@@ -2123,11 +2583,11 @@ void initWebServer()
         addTolist(10);
 
         WiFi.disconnect(true);
-        LOG_W("WiFi连接失败，切换到AP模式");
     }
 
     if (!wifisuccess)
     {
+        LOG_W("WiFi连接失败，切换到AP模式");
         startAPMode();
     }
 

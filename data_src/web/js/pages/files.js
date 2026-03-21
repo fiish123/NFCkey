@@ -2,6 +2,8 @@
 (function() {
     let currentPath = '/';
     let selectedFile = null;
+    let fileHashInfo = null;
+    let systemInfoPromise = null;
 
     // SVG图标
     const dirIcon = `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
@@ -13,7 +15,36 @@
     function init() {
         loadList(currentPath);
         loadStorageInfo();
+        loadSystemInfo();
         initUploadInteractions();
+    }
+
+    function loadSystemInfo() {
+        if (systemInfoPromise) {
+            return systemInfoPromise;
+        }
+
+        systemInfoPromise = fetch('/api/system/info')
+            .then(response => {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
+            .then(response => {
+                if (response.success && response.data) {
+                    fileHashInfo = response.data;
+                }
+                return fileHashInfo;
+            })
+            .catch(err => {
+                console.error('加载系统信息失败:', err);
+                fileHashInfo = null;
+                throw err;
+            })
+            .finally(() => {
+                systemInfoPromise = null;
+            });
+
+        return systemInfoPromise;
     }
 
     // 初始化拖拽上传
@@ -50,33 +81,7 @@
 
     // 验证并上传
     function validateAndUpload(file) {
-        loadStorageInfo();
-        
-        fetch('/api/filesystem')
-            .then(response => {
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                return response.json();
-            })
-            .then(response => {
-                if (!response.success || !response.data) {
-                    showToast('验证失败: ' + (response.message || '未知错误'), 'error');
-                    resetSelectedUploadArea();
-                    return;
-                }
-                const fileSizeKB = Math.ceil(file.size / 1024);
-                const freeSpaceKB = response.data.free;
-                
-                if (fileSizeKB > freeSpaceKB) {
-                    showToast('存储空间不足！\n\n文件大小: ' + fileSizeKB + ' KB\n剩余空间: ' + freeSpaceKB + ' KB\n\n请删除一些文件后再试。', 'warning', { duration: 5000 });
-                    resetSelectedUploadArea();
-                } else {
-                    uploadFile(file);
-                }
-            })
-            .catch(err => {
-                console.error('验证文件失败:', err);
-                showToast('验证失败: ' + err.message, 'error');
-            });
+        uploadFile(file);
     }
 
     // 加载存储信息
@@ -126,7 +131,16 @@
                     return;
                 }
                 currentPath = path;
-                document.getElementById('currentPath').value = path;
+                const currentPathElement = document.getElementById('currentPath');
+                const pathChipElement = currentPathElement && currentPathElement.closest('.path-chip');
+
+                if (currentPathElement) {
+                    currentPathElement.textContent = path;
+                }
+
+                if (pathChipElement) {
+                    pathChipElement.title = path;
+                }
                 renderList(response.data);
             })
             .catch(err => {
@@ -234,10 +248,28 @@
         .catch(err => showToast('请求失败: ' + err.message, 'error'));
     }
 
-    function uploadFile(file) {
+    async function uploadFile(file) {
         const fileToUpload = file || selectedFile || document.getElementById('file').files[0];
         if (!fileToUpload) {
             showToast('请选择文件', 'warning');
+            return;
+        }
+
+        let hashHeaders = {};
+        try {
+            if (!fileHashInfo) {
+                await loadSystemInfo();
+            }
+
+            hashHeaders = await buildFileHashHeaders(fileToUpload, {
+                algorithm: fileHashInfo && fileHashInfo.fileHashAlgorithm,
+                headerName: fileHashInfo && fileHashInfo.fileHashHeader,
+                required: fileHashInfo ? fileHashInfo.fileHashRequired !== false : true,
+                label: '文件'
+            });
+        } catch (err) {
+            showToast(err.message || '文件哈希计算失败', 'error');
+            resetSelectedUploadArea();
             return;
         }
 
@@ -255,6 +287,9 @@
         // 使用 XMLHttpRequest 支持上传进度
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/files?path=' + encodeURIComponent(currentPath), true);
+        Object.entries(hashHeaders).forEach(([headerName, headerValue]) => {
+            xhr.setRequestHeader(headerName, headerValue);
+        });
 
         // 上传进度监听
         xhr.upload.onprogress = function(e) {
@@ -273,7 +308,16 @@
                 loadList(currentPath);
                 loadStorageInfo();
             } else {
-                showToast('上传失败', 'error');
+                let errorMsg = 'HTTP ' + xhr.status;
+                try {
+                    if (xhr.responseText) {
+                        const jsonData = JSON.parse(xhr.responseText);
+                        errorMsg = jsonData.message || jsonData.data?.error || jsonData.data?.reason || errorMsg;
+                    }
+                } catch (e) {
+                    console.error('解析上传错误失败:', e);
+                }
+                showToast('上传失败: ' + errorMsg, 'error');
                 resetSelectedUploadArea();
                 // 隐藏进度条
                 if (uploadProgress) uploadProgress.style.display = 'none';

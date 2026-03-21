@@ -34,6 +34,13 @@ struct FileUploadState
     uint64_t size;
     bool error;
     bool active;
+    bool finalSeen;
+    bool success;
+    bool hashProvided;
+    bool hashFormatInvalid;
+    bool hashMismatch;
+    bool rollbackRestoreFailed;
+    String expectedSha256;
 
     void reset()
     {
@@ -43,6 +50,13 @@ struct FileUploadState
         size = 0;
         error = false;
         active = false;
+        finalSeen = false;
+        success = false;
+        hashProvided = false;
+        hashFormatInvalid = false;
+        hashMismatch = false;
+        rollbackRestoreFailed = false;
+        expectedSha256 = "";
     }
 };
 
@@ -71,6 +85,8 @@ bool isWebServerRunning();
 
 // 停止Web服务器
 void stopWebServer();
+
+void serviceScheduledRestart();
 
 // WiFi配置相关函数声明
 bool loadWifiConfig(String &ssid, String &password);

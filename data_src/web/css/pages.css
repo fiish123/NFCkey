@@ -32,10 +32,72 @@
 }
 
 /* ==================== WiFi配置页面样式 ==================== */
+
+/* WiFi状态和扫描区域 */
+#page-wifi .wifi-status-section {
+    margin: var(--spacing-lg) 0;
+    padding: var(--spacing-lg);
+}
+
+#page-wifi .wifi-scan-btn {
+    margin-top: var(--spacing-lg);
+}
+
 #page-wifi .wifi-list {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
+    margin-top: var(--spacing-lg);
+}
+
+#page-wifi .wifi-empty-text {
+    text-align: center;
+    color: var(--color-text-secondary);
+}
+
+/* WiFi配置表单区域 */
+#page-wifi .wifi-config-section {
+    margin: var(--spacing-xl) 0;
+}
+
+#page-wifi .wifi-config-section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: var(--spacing-md);
+}
+
+#page-wifi .wifi-actions-row {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-md);
+}
+
+#page-wifi .wifi-actions-row .btn {
+    flex: 1;
+}
+
+/* 危险操作区域 */
+#page-wifi .wifi-danger-section {
+    margin-top: var(--spacing-xl);
+}
+
+#page-wifi .wifi-clear-btn {
+    width: 100%;
+}
+
+/* 返回链接 */
+#page-wifi .wifi-back-link {
+    width: 100%;
+    justify-content: center;
+    text-decoration: none;
+    margin-top: var(--spacing-md);
+}
+
+@media (max-width: 480px) {
+    #page-wifi .wifi-actions-row {
+        flex-direction: column;
+    }
 }
 
 #page-wifi .wifi-item {
@@ -256,6 +318,8 @@
 }
 
 /* ==================== 文件管理页面样式 ==================== */
+
+/* 通用按钮样式 */
 #page-files :where(.btn) {
     padding: 10px 20px;
     font-size: 14px;
@@ -268,7 +332,7 @@
     transform: translateY(-2px);
 }
 
-
+/* 文件列表项动画 */
 #page-files .item {
     opacity: 0;
     transform: translateY(20px);
@@ -279,6 +343,585 @@
     to {
         opacity: 1;
         transform: translateY(0);
+    }
+}
+
+/* ==================== 上传区域样式改进 ==================== */
+#page-files .upload-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+#page-files .upload-area {
+    position: relative;
+    border: 2px dashed var(--color-border);
+    padding: var(--spacing-xl) var(--spacing-lg);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, rgba(236, 254, 255, 0.6) 0%, rgba(255, 255, 255, 0.8) 100%);
+    backdrop-filter: blur(8px);
+    transition: var(--transition-base);
+    cursor: pointer;
+    text-align: center;
+    min-height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#page-files .upload-area::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(8, 145, 178, 0.03) 0%, transparent 70%);
+    pointer-events: none;
+}
+
+#page-files .upload-area:hover {
+    border-color: var(--color-primary);
+    background: linear-gradient(135deg, rgba(236, 254, 255, 0.85) 0%, rgba(255, 255, 255, 0.95) 100%);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md), 0 0 0 4px rgba(8, 145, 178, 0.08);
+}
+
+#page-files .upload-area:focus-visible {
+    outline: 3px solid var(--color-primary-light);
+    outline-offset: 2px;
+    border-color: var(--color-primary);
+}
+
+#page-files .upload-area.drag-over {
+    border-color: var(--color-success);
+    border-style: solid;
+    background: linear-gradient(135deg, rgba(220, 252, 231, 0.9) 0%, rgba(255, 255, 255, 0.95) 100%);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md), 0 0 0 4px rgba(34, 197, 94, 0.1);
+}
+
+#page-files .upload-area.drag-over::after {
+    content: '释放以上传';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--color-success);
+    font-weight: 700;
+    font-size: 18px;
+    pointer-events: none;
+    z-index: 2;
+}
+
+#page-files .upload-area.has-file {
+    border-style: solid;
+    border-color: var(--color-primary);
+    background: linear-gradient(135deg, rgba(236, 254, 255, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+
+/* 上传内容 */
+#page-files .upload-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-md);
+    transition: var(--transition-base);
+}
+
+#page-files .upload-icon {
+    width: 64px;
+    height: 64px;
+    color: var(--color-primary);
+    transition: var(--transition-base);
+    filter: drop-shadow(0 4px 8px rgba(8, 145, 178, 0.2));
+}
+
+#page-files .upload-area:hover .upload-icon {
+    transform: scale(1.1);
+    filter: drop-shadow(0 6px 12px rgba(8, 145, 178, 0.3));
+}
+
+#page-files .upload-area.has-file .upload-icon {
+    display: none;
+}
+
+#page-files .upload-text {
+    font-size: 15px;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    transition: var(--transition-base);
+}
+
+#page-files .upload-area:hover .upload-text {
+    color: var(--color-primary);
+}
+
+#page-files .upload-area.has-file .upload-text {
+    display: none;
+}
+
+/* 文件信息显示 */
+#page-files .file-info {
+    display: none !important;
+    position: relative;
+    z-index: 1;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-md);
+    animation: fileInfoSlideIn 0.3s ease-out;
+}
+
+#page-files .upload-area.has-file .file-info {
+    display: flex !important;
+}
+
+@keyframes fileInfoSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#page-files .file-info-icon {
+    width: 56px;
+    height: 56px;
+    color: var(--color-primary);
+    background: linear-gradient(135deg, rgba(8, 145, 178, 0.1) 0%, rgba(8, 145, 178, 0.05) 100%);
+    padding: var(--spacing-md);
+    border-radius: var(--radius-lg);
+    border: 2px solid rgba(8, 145, 178, 0.15);
+    transition: var(--transition-base);
+}
+
+#page-files .file-info-icon:hover {
+    transform: scale(1.05);
+    background: linear-gradient(135deg, rgba(8, 145, 178, 0.15) 0%, rgba(8, 145, 178, 0.08) 100%);
+}
+
+#page-files .file-info-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    text-align: center;
+    max-width: 100%;
+}
+
+#page-files .file-name {
+    font-family: var(--font-heading);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-primary);
+    word-break: break-all;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-primary-light);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(8, 145, 178, 0.1);
+}
+
+#page-files .file-size {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    background: rgba(248, 250, 252, 0.8);
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+}
+
+/* 上传进度容器 */
+#page-files .upload-progress-wrapper {
+    display: none;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    animation: progressSlideIn 0.3s ease-out;
+}
+
+#page-files .upload-progress-wrapper.active {
+    display: flex;
+}
+
+@keyframes progressSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#page-files .upload-progress-container {
+    position: relative;
+    width: 100%;
+    height: 28px;
+    background: #E2E8F0;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    box-shadow: var(--shadow-inner);
+}
+
+#page-files .upload-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-primary-hover) 50%, var(--color-primary) 100%);
+    background-size: 200% 100%;
+    border-radius: var(--radius-full);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+#page-files .upload-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+#page-files .upload-status-text {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    text-align: right;
+    padding-right: var(--spacing-xs);
+    font-family: var(--font-heading);
+}
+
+/* ==================== 路径浏览器样式改进 ==================== */
+#page-files .path-browser {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    background: linear-gradient(135deg, rgba(236, 254, 255, 0.9) 0%, rgba(255, 255, 255, 0.95) 100%);
+    backdrop-filter: blur(16px);
+    border-radius: var(--radius-lg);
+    border: 2px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    position: relative;
+    overflow: hidden;
+}
+
+#page-files .path-browser::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+}
+
+/* 导航控件区域 */
+#page-files .path-nav-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    align-items: center;
+}
+
+#page-files .nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    min-height: 40px;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition-base);
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+    color: white;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+#page-files .nav-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: transform 0.4s ease;
+}
+
+#page-files .nav-btn:hover::before {
+    transform: translateX(100%);
+}
+
+#page-files .nav-btn:hover {
+    background: linear-gradient(135deg, var(--color-primary-hover) 0%, #155E75 100%);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+#page-files .nav-btn:active {
+    transform: translateY(0);
+}
+
+#page-files .nav-btn:focus-visible {
+    outline: 3px solid var(--color-primary-light);
+    outline-offset: 2px;
+}
+
+#page-files .nav-btn:disabled {
+    background: linear-gradient(135deg, #CBD5E1 0%, #94A3B8 100%);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: var(--shadow-sm);
+}
+
+#page-files .nav-btn:disabled::before {
+    display: none;
+}
+
+#page-files .nav-btn svg {
+    width: 14px;
+    height: 14px;
+    transition: var(--transition-base);
+}
+
+#page-files .nav-btn:hover svg {
+    transform: scale(1.1);
+}
+
+/* 路径显示包装器 */
+#page-files .path-display-wrapper {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
+    box-shadow: var(--shadow-inner);
+}
+
+#page-files .path-display-wrapper:hover {
+    border-color: var(--color-border-hover);
+    box-shadow: var(--shadow-sm);
+}
+
+#page-files .path-folder-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--color-primary);
+    flex-shrink: 0;
+    transition: var(--transition-base);
+}
+
+#page-files .path-display-wrapper:hover .path-folder-icon {
+    transform: scale(1.1);
+}
+
+#page-files .path-display {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-family: var(--font-heading);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    outline: none;
+    width: 100%;
+    min-width: 0;
+    cursor: default;
+}
+
+#page-files .path-display::placeholder {
+    color: var(--color-text-light);
+}
+
+/* 操作按钮区域 */
+#page-files .path-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+#page-files .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    min-height: 40px;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition-base);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+#page-files .action-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: transform 0.4s ease;
+}
+
+#page-files .action-btn:hover::before {
+    transform: translateX(100%);
+}
+
+#page-files .action-btn svg {
+    width: 14px;
+    height: 14px;
+    transition: var(--transition-base);
+}
+
+#page-files .action-btn:hover svg {
+    transform: scale(1.1);
+}
+
+#page-files .action-btn-create {
+    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+    color: white;
+}
+
+#page-files .action-btn-create:hover {
+    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md), 0 0 15px rgba(59, 130, 246, 0.3);
+}
+
+#page-files .action-btn:active {
+    transform: translateY(0);
+}
+
+#page-files .action-btn:focus-visible {
+    outline: 3px solid rgba(59, 130, 246, 0.2);
+    outline-offset: 2px;
+}
+
+/* ==================== 响应式调整 ==================== */
+@media (max-width: 768px) {
+    #page-files .path-browser {
+        padding: var(--spacing-md);
+    }
+
+    #page-files .path-nav-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #page-files .path-display-wrapper {
+        width: 100%;
+    }
+
+    #page-files .nav-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    #page-files .path-actions {
+        width: 100%;
+    }
+
+    #page-files .action-btn {
+        flex: 1;
+        justify-content: center;
+        min-width: 0;
+    }
+
+    #page-files .upload-area {
+        padding: var(--spacing-lg) var(--spacing-md);
+        min-height: 160px;
+    }
+
+    #page-files .upload-icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    #page-files .file-info-icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    #page-files .file-name {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    #page-files .upload-area {
+        padding: var(--spacing-md);
+        min-height: 140px;
+    }
+
+    #page-files .upload-icon {
+        width: 40px;
+        height: 40px;
+    }
+
+    #page-files .upload-text {
+        font-size: 13px;
+    }
+
+    #page-files .file-info-icon {
+        width: 40px;
+        height: 40px;
+        padding: var(--spacing-sm);
+    }
+
+    #page-files .file-name {
+        font-size: 12px;
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+
+    #page-files .file-size {
+        font-size: 12px;
+    }
+
+    #page-files .nav-btn,
+    #page-files .action-btn {
+        padding: 8px 12px;
+        font-size: 12px;
+        min-height: 36px;
+    }
+
+    #page-files .nav-btn svg,
+    #page-files .action-btn svg {
+        width: 12px;
+        height: 12px;
+    }
+
+    #page-files .path-browser {
+        gap: var(--spacing-sm);
+    }
+
+    #page-files .path-actions {
+        flex-direction: column;
+    }
+
+    #page-files .action-btn {
+        width: 100%;
     }
 }
 
@@ -1233,10 +1876,8 @@
 }
 
 #page-cards .card-item .btn-icon:hover {
-    background: linear-gradient(135deg, var(--color-danger) 0%, var(--color-danger-hover) 100%);
-    color: white;
-    transform: scale(1.1);
-    box-shadow: var(--shadow-md), 0 0 12px rgba(239, 68, 68, 0.3);
+    background: linear-gradient(135deg, var(--color-danger-hover) 0%, #B91C1C 100%);
+    box-shadow: var(--shadow-md), 0 0 15px rgba(239, 68, 68, 0.3);
 }
 
 #page-cards .card-item .btn-icon:active {

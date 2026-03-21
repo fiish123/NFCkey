@@ -258,7 +258,6 @@ void playAudio(unsigned int in)
 
   LOG_D("开始播放音频: %s", audioPath);
 
-  // 播放音频文件（阻塞直到完成）
   player1.playPath(audioPath);
 
   LOG_D("音频播放完成: %s", audioPath);
@@ -478,7 +477,7 @@ bool loadCardsDataFromFile()
 {
   if (!LittleFS.exists(CARDS_FILE_PATH))
   {
-    LOG_I("卡片配置文件不存在，创建默认文件");
+    LOG_D("卡片配置文件不存在，创建默认文件");
 
     // 创建空卡片数据
     JsonDocument doc;
@@ -495,7 +494,7 @@ bool loadCardsDataFromFile()
     serializeJson(doc, file);
     file.close();
 
-    LOG_I("卡片配置文件创建成功");
+    LOG_D("卡片配置文件创建成功");
   }
 
   // 读取文件
@@ -541,7 +540,7 @@ bool loadCardsDataFromFile()
     }
   }
 
-  LOG_I("授权卡片加载完成: %d 张", authorizedCards.size());
+  LOG_D("授权卡片加载完成: %d 张", authorizedCards.size());
   if (authorizedCards.size() <= 0)
   {
     return false;
@@ -622,22 +621,35 @@ NFCcard ReadCard()
   uint8_t rxBuffer[20];      // 缓冲区
   uint8_t bufferIndex = 0;   // 缓冲索引
   bool frameStarted = false; // 接收标志
+  unsigned long frameStartTime = 0;
   unsigned long lastReceiveTime = 0;
   const unsigned long TIMEOUT_MS = 100; // 超时时长
 
   NFCcard readdata;
   readdata.uidLength = 0; // 初始化为无效状态
 
-  // 超时检查：如果已经开始接收帧但超过设定时间没有收到完整数据，则重置状态
-  if (frameStarted && (millis() - lastReceiveTime > TIMEOUT_MS))
+  while (1)
   {
-    frameStarted = false;
-    bufferIndex = 0;
-    return readdata;
-  }
+    if (Serial1.available() <= 0)
+    {
+      if (frameStarted && (millis() - lastReceiveTime > TIMEOUT_MS))
+      {
+        LOG_W("NFC数据帧接收超时: 已接收=%u字节, 持续=%lu ms", bufferIndex, millis() - frameStartTime);
+        frameStarted = false;
+        bufferIndex = 0;
+        readdata.uidLength = 0;
+        return readdata;
+      }
 
-  while (Serial1.available() > 0)
-  {
+      if (!frameStarted)
+      {
+        break;
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
     uint8_t incomingByte = Serial1.read();
     lastReceiveTime = millis(); // 更新最后接收时间
 
@@ -648,6 +660,7 @@ NFCcard ReadCard()
       frameStarted = true;
       bufferIndex = 0;
       rxBuffer[bufferIndex++] = incomingByte;
+      frameStartTime = lastReceiveTime;
       lastReceiveTime = millis(); // 开始接收时记录时间
     }
     // 如果已经开始接收帧
@@ -745,6 +758,11 @@ void sendCardSearchCommand()
     vTaskDelay(pdMS_TO_TICKS(1));
     now = millis();
   }
+
+  if (Serial1.available() < 14)
+  {
+    LOG_W("NFC寻卡响应超时: 等待=%lu ms, 已接收=%d/14字节", now - last, Serial1.available());
+  }
 }
 
 void setup()
@@ -755,6 +773,7 @@ void setup()
   // 初始化调试串口
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
+  LOG_I("系统启动，开始初始化硬件与服务");
 
   // 初始化 UART1
   connectchoice = 2;
@@ -798,12 +817,14 @@ void setup()
     LOG_E("LittleFS文件系统挂载失败");
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
+  LOG_I("LittleFS文件系统挂载成功");
 
   bool webdebug = true;
 
   // 加载卡片数据
   if (!loadCardsDataFromFile() || webdebug)
   {
+    LOG_W("授权卡片不可用，启动Web管理服务用于配置");
     initWebServer();
     webServerStartTime = millis();
   }
@@ -846,14 +867,18 @@ void setup()
 
 void loop()
 {
+  serviceScheduledRestart();
+
   // 如果Web服务器正在运行，不进入浅睡眠
   if (!isWebServerRunning())
   {
     // 进入浅睡眠
+    LOG_D("进入浅睡眠");
     powermanager(1, false);
     powermanager(2, false);
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_light_sleep_start();
+    LOG_D("已唤醒");
   }
   else if (digitalRead(IRQ) != HIGH)
   {
@@ -896,7 +921,7 @@ void loop()
       if (isCardAuthorized(currentcard))
       {
         // 匹配
-        LOG_I("卡片验证通过，执行解锁动作");
+        LOG_D("卡片验证通过，执行解锁动作");
 
         // leds[0] = CRGB::Green;
         // FastLED.show();
@@ -912,7 +937,7 @@ void loop()
         // 不匹配
         // leds[0] = CRGB::Red;
         // FastLED.show();
-        LOG_I("卡片验证失败，拒绝访问");
+        LOG_W("卡片验证失败，拒绝访问");
 
         // au:denied
         addTolist(4);
@@ -980,7 +1005,7 @@ void loop()
       {
         if (!isWebServerRunning())
         {
-          LOG_I("连续刷卡验证通过，启动Web管理服务");
+          LOG_I("检测到连续刷卡");
           initWebServer();
         }
         consecutiveCardCount = 0; // 重置计数器
@@ -989,15 +1014,24 @@ void loop()
       if (isCardAuthorized(currentcard))
       {
         consecutiveCardCount++;
+        LOG_I("连续刷卡计数: %u/2", consecutiveCardCount);
       }
       else
       {
+        if (consecutiveCardCount != 0)
+        {
+          LOG_D("刷卡计数已重置：检测到未授权卡片");
+        }
         consecutiveCardCount = 0;
       }
     }
     else
     {
       LOG_W("卡片数据读取异常");
+      if (consecutiveCardCount != 0)
+      {
+        LOG_D("刷卡计数已重置：读卡异常");
+      }
       consecutiveCardCount = 0;
     }
     vTaskDelay(pdMS_TO_TICKS(1000));

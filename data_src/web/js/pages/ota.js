@@ -1,6 +1,7 @@
 // OTA升级页面逻辑模块
 (function() {
     let selectedFile = null;
+    let otaSystemInfo = null;
     
     // 初始化
     function init() {
@@ -17,6 +18,7 @@
             .then(response => {
                 if (response.success && response.data) {
                     const data = response.data;
+                    otaSystemInfo = data;
                     document.getElementById('chipModel').textContent = data.chipModel || '未知';
                     document.getElementById('chipId').textContent = data.chipId || '未知';
                     document.getElementById('currentVersion').textContent = data.version || '未知';
@@ -29,6 +31,7 @@
             })
             .catch(err => {
                 console.error('获取系统信息失败:', err);
+                otaSystemInfo = null;
                 document.getElementById('chipModel').textContent = '获取失败';
                 document.getElementById('chipId').textContent = '-';
                 document.getElementById('currentVersion').textContent = '-';
@@ -83,11 +86,32 @@
         // 开始上传
         uploadFile(file);
     }
+
+    async function buildOtaHashHeaders(file) {
+        const algorithm = otaSystemInfo && otaSystemInfo.otaHashAlgorithm;
+        const headerName = otaSystemInfo && otaSystemInfo.otaHashHeader;
+
+        return buildFileHashHeaders(file, {
+            algorithm: algorithm,
+            headerName: headerName,
+            required: otaSystemInfo && otaSystemInfo.otaHashRequired,
+            label: '固件'
+        });
+    }
     
-    function uploadFile(file) {
+    async function uploadFile(file) {
         const fileToUpload = file || selectedFile || document.getElementById('file').files[0];
         if (!fileToUpload) {
             showToast('请选择文件', 'warning');
+            return;
+        }
+
+        let hashHeaders = {};
+        try {
+            hashHeaders = await buildOtaHashHeaders(fileToUpload);
+        } catch (err) {
+            showToast(err.message || '固件哈希计算失败', 'error');
+            resetSelectedUploadArea();
             return;
         }
         
@@ -144,6 +168,9 @@
         };
         
         xhr.open('POST', '/api/system/firmware', true);
+        Object.entries(hashHeaders).forEach(([headerName, headerValue]) => {
+            xhr.setRequestHeader(headerName, headerValue);
+        });
         xhr.send(formData);
     }
     
