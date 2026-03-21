@@ -513,6 +513,18 @@ function computeSha256Fallback(buffer) {
 async function computeFileSha256(file) {
     const buffer = await file.arrayBuffer();
 
+    return computeBufferSha256(buffer);
+}
+
+async function computeBufferSha256(input) {
+    let buffer = input;
+
+    if (input instanceof Uint8Array) {
+        buffer = input.byteOffset === 0 && input.byteLength === input.buffer.byteLength
+            ? input.buffer
+            : input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength);
+    }
+
     if (window.crypto && window.crypto.subtle) {
         const digest = await window.crypto.subtle.digest('SHA-256', buffer);
         return bytesToHex(new Uint8Array(digest));

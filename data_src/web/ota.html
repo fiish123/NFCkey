@@ -31,25 +31,46 @@
             </div>
         </div>
 
-        <!-- 固件上传 -->
         <div class="section" id="uploadSection">
-            <h3>固件上传</h3>
-            <div class="upload-box" id="uploadBox" role="button" tabindex="0" aria-label="选择固件文件或拖拽文件到此处">
-                <input type="file" id="file" accept=".bin" style="display: none;" aria-label="选择固件文件" aria-describedby="otaUploadHint" />
+            <h3>升级包上传</h3>
+            <div class="upload-box" id="uploadBox" role="button" tabindex="0" aria-label="选择升级包或拖拽文件到此处">
+                <input type="file" id="file" accept=".zip" style="display: none;" aria-label="选择升级包" aria-describedby="otaUploadHint" />
                 <div id="uploadBoxContent" class="upload-box-content">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 48px; height: 48px; margin-bottom: var(--spacing-md);" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
-                    <p>点击选择 .bin 文件或拖拽文件到此处</p>
+                    <p>点击选择升级包或拖拽 `.zip` 文件到此处</p>
                     <p id="otaUploadHint" class="hint" style="font-size: 12px; color: var(--text-secondary); margin-top: var(--spacing-sm);">
-                        最大支持 2MB
+                        升级包需包含 `firmware.bin` 和 `data/` 目录内的文件系统资源
                     </p>
                 </div>
                 <div id="fileInfo" style="display: none; text-align: center;">
-                    <p><strong>文件名:</strong> <span id="fileName"></span></p>
+                    <p><strong>升级包:</strong> <span id="fileName"></span></p>
                     <p><strong>大小:</strong> <span id="fileSize"></span></p>
+                </div>
+            </div>
+
+            <div class="section system-info" id="packageSummary" style="display: none; margin-top: var(--spacing-lg);">
+                <h3>升级包摘要</h3>
+                <div class="system-info-grid">
+                    <div class="info-item">
+                        <strong>固件文件:</strong>
+                        <span id="packageFirmwareName">-</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>固件大小:</strong>
+                        <span id="packageFirmwareSize">-</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>资源文件数:</strong>
+                        <span id="packageFsCount">0</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>同步结果:</strong>
+                        <span id="packageSyncResult">等待开始</span>
+                    </div>
                 </div>
             </div>
 
@@ -58,8 +79,11 @@
                 <div class="progress-bar-container">
                     <div id="progressBar" class="progress-bar" role="status" aria-live="polite">0%</div>
                 </div>
+                <p id="progressStage" class="progress-hint" style="text-align: center; color: var(--text-primary); font-size: 14px; margin-top: var(--spacing-sm);">
+                    等待开始
+                </p>
                 <p class="progress-hint" style="text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: var(--spacing-sm);">
-                    请勿关闭浏览器，等待上传完成...
+                    页面会先同步文件系统资源，再上传固件并自动重启设备
                 </p>
             </div>
         </div>
@@ -68,10 +92,11 @@
         <div class="section">
             <h3>注意事项</h3>
             <ul class="note-list">
-                <li>升级过程中请勿关闭浏览器</li>
+                <li>升级过程中请勿关闭浏览器或切换页面</li>
+                <li>文件系统资源会先按差异同步，再上传固件</li>
                 <li>升级完成后设备将自动重启</li>
                 <li>请确保电源稳定，避免断电导致升级失败</li>
-                <li>升级失败时设备会自动回滚到旧版本</li>
+                <li>固件上传失败时不会切换到新固件，已同步的文件系统资源不会自动整体回滚</li>
             </ul>
         </div>
 
@@ -88,6 +113,7 @@
     </div>
     </main>
 
+    <script src="/web/js/vendor/fflate.bundle"></script>
     <script src="/web/js/common.js"></script>
     <script src="/web/js/pages/ota.js"></script>
 </body>

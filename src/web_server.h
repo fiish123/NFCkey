@@ -102,6 +102,7 @@ void handleListFiles(AsyncWebServerRequest *request);
 void handleCreateDirectory(AsyncWebServerRequest *request);
 void handleDeleteResource(AsyncWebServerRequest *request);
 void handleDownloadFile(AsyncWebServerRequest *request);
+void handleFileSyncCheck(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 void handleUploadFileComplete(AsyncWebServerRequest *request);
 void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void handleGetCardsList(AsyncWebServerRequest *request);

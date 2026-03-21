@@ -19,7 +19,7 @@ print("🚀 Web文件系统压缩工具")
 def is_filesystem_upload():
     
     cmd_args = ' '.join(sys.argv).lower()
-    if 'uploadfs' in cmd_args or '--target uploadfs' in cmd_args:
+    if 'uploadfs' in cmd_args or 'buildfs' in cmd_args:
         return True
     
     return False
@@ -46,7 +46,7 @@ SRC_DIR = PROJECT_ROOT / "data_src" / "web"
 DST_DIR = PROJECT_ROOT / "data" / "web"
 
 # 需要压缩的文件扩展名
-COMPRESS_EXTENSIONS = {'.html', '.css', '.js'}
+COMPRESS_EXTENSIONS = {'.html', '.css', '.js','.bundle'}
 
 # 压缩级别 (1-9, 9最高但最慢)
 GZIP_LEVEL = 9

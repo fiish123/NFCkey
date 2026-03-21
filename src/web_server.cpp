@@ -8,6 +8,7 @@
 
 #include <deque>
 #include <mbedtls/sha256.h>
+#include <vector>
 
 extern "C"
 {
@@ -73,7 +74,7 @@ const int AP_MAX_CONNECTION = 1;
 
 // 服务器配置
 static WebServerConfig serverConfig = {
-    "1.0.0",
+    "1.1.0",
     80};
 
 // 文件上传状态管理（类型来自头文件）
@@ -114,6 +115,8 @@ static mbedtls_sha256_context fileUploadSha256Context;
 static bool fileUploadSha256ContextActive = false;
 static String fileUploadTargetPath = "";
 static String fileUploadTempPath = "";
+static std::vector<uint8_t> jsonBodyBuffer;
+static AsyncWebServerRequest *jsonBodyRequest = nullptr;
 
 // WiFi测试状态管理（仍用于异步任务协调）
 static bool wifiTestRunning = false;
@@ -233,6 +236,130 @@ static bool isLowerHexString(const String &value, size_t expectedLength)
     }
 
     return true;
+}
+
+static bool isReservedUploadPath(const String &path)
+{
+    return path.endsWith(".uploading") || path.endsWith(".backup");
+}
+
+static bool isValidFsPath(const String &path)
+{
+    if (path.isEmpty() || path[0] != '/')
+        return false;
+
+    if (path.indexOf("..") >= 0)
+        return false;
+
+    if (isReservedUploadPath(path))
+        return false;
+
+    return true;
+}
+
+static String getParentDirectory(const String &path)
+{
+    if (path.length() <= 1)
+        return "/";
+
+    int separatorIndex = path.lastIndexOf('/');
+    if (separatorIndex <= 0)
+        return "/";
+
+    return path.substring(0, separatorIndex);
+}
+
+static bool ensureDirectoryExistsRecursive(const String &directoryPath)
+{
+    String normalized = normalizePath(directoryPath);
+    if (normalized.isEmpty() || !isValidFsPath(normalized))
+        return false;
+
+    if (normalized == "/")
+        return true;
+
+    File existing = LittleFS.open(normalized);
+    if (existing)
+    {
+        const bool isDirectory = existing.isDirectory();
+        existing.close();
+        return isDirectory;
+    }
+
+    const String parent = getParentDirectory(normalized);
+    if (!ensureDirectoryExistsRecursive(parent))
+        return false;
+
+    if (LittleFS.mkdir(normalized))
+        return true;
+
+    File created = LittleFS.open(normalized);
+    if (!created)
+        return false;
+
+    const bool isDirectory = created.isDirectory();
+    created.close();
+    return isDirectory;
+}
+
+static bool computeLittleFsFileSha256(const String &path, String &outHash)
+{
+    File file = LittleFS.open(path, "r");
+    if (!file || file.isDirectory())
+    {
+        if (file)
+            file.close();
+        return false;
+    }
+
+    mbedtls_sha256_context context;
+    mbedtls_sha256_init(&context);
+    if (mbedtls_sha256_starts_ret(&context, 0) != 0)
+    {
+        mbedtls_sha256_free(&context);
+        file.close();
+        return false;
+    }
+
+    uint8_t buffer[1024];
+    while (file.available())
+    {
+        const size_t readBytes = file.read(buffer, sizeof(buffer));
+        if (readBytes == 0)
+            break;
+
+        if (mbedtls_sha256_update_ret(&context, buffer, readBytes) != 0)
+        {
+            mbedtls_sha256_free(&context);
+            file.close();
+            return false;
+        }
+    }
+
+    file.close();
+
+    unsigned char digest[OTA_SHA256_BYTES];
+    if (mbedtls_sha256_finish_ret(&context, digest) != 0)
+    {
+        mbedtls_sha256_free(&context);
+        return false;
+    }
+
+    mbedtls_sha256_free(&context);
+
+    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
+    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
+    {
+        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
+    }
+
+    outHash = digestHex;
+    return true;
+}
+
+static bool isProtectedRuntimeFile(const String &path)
+{
+    return path == "/cards.json";
 }
 
 static void resetOtaHashContext()
@@ -563,6 +690,12 @@ void sendApiResponse(AsyncWebServerRequest *request, const ApiResponse &response
 static void sendSuccessResponse(AsyncWebServerRequest *request);
 static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data);
 
+static void resetJsonBodyState()
+{
+    jsonBodyBuffer.clear();
+    jsonBodyRequest = nullptr;
+}
+
 /**
  * @brief 发送成功响应（200 OK），无额外数据。
  * @param request HTTP请求指针
@@ -631,22 +764,41 @@ template <typename Func>
 static void handleJsonBody(AsyncWebServerRequest *request, uint8_t *data, size_t len,
                            size_t index, size_t total, Func func)
 {
-    if (index == 0)
+    if (index == 0 || jsonBodyRequest != request)
     {
-        // 可选：记录开始解析
+        resetJsonBodyState();
+        jsonBodyRequest = request;
+        if (total > 0)
+            jsonBodyBuffer.reserve(total);
     }
-    // 只在最后一个数据块时处理
+
+    if (index != jsonBodyBuffer.size())
+    {
+        LOG_E("JSON请求体分块顺序异常: index=%u buffered=%u total=%u", index, jsonBodyBuffer.size(), total);
+        resetJsonBodyState();
+        sendErrorResponse(request, 400, "无效的JSON");
+        return;
+    }
+
+    if (data && len > 0)
+    {
+        jsonBodyBuffer.insert(jsonBodyBuffer.end(), data, data + len);
+    }
+
     if (index + len < total)
         return;
 
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, data, total);
+    DeserializationError error = deserializeJson(doc, jsonBodyBuffer.data(), jsonBodyBuffer.size());
     if (error)
     {
         LOG_E("JSON解析错误: %s", error.c_str());
+        resetJsonBodyState();
         sendErrorResponse(request, 400, "无效的JSON");
         return;
     }
+
+    resetJsonBodyState();
     func(request, doc);
 }
 
@@ -1539,6 +1691,12 @@ void handleDeleteResource(AsyncWebServerRequest *request)
     }
     LOG_D("HTTP DELETE /api/files?path=%s", path.c_str());
 
+    if (isProtectedRuntimeFile(path))
+    {
+        sendErrorResponse(request, 403, "运行时数据文件受保护，禁止删除");
+        return;
+    }
+
     File f = LittleFS.open(path);
     if (!f)
     {
@@ -1618,6 +1776,90 @@ void handleDownloadFile(AsyncWebServerRequest *request)
     request->send(response);
 }
 
+void handleFileSyncCheck(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+{
+    handleJsonBody(request, data, len, index, total, [](AsyncWebServerRequest *req, JsonDocument &doc)
+                   {
+        JsonArray files = doc["files"].as<JsonArray>();
+        if (files.isNull())
+        {
+            sendErrorResponse(req, 400, "缺少files数组");
+            return;
+        }
+
+        JsonDocument responseDoc;
+        JsonArray results = responseDoc["results"].to<JsonArray>();
+
+        for (JsonVariant fileVariant : files)
+        {
+            JsonObject fileObj = fileVariant.as<JsonObject>();
+            JsonObject result = results.add<JsonObject>();
+
+            String rawPath = fileObj["path"].is<const char *>() ? String(fileObj["path"].as<const char *>()) : String("");
+            rawPath.trim();
+
+            String normalizedPath = normalizePath(rawPath);
+            result["path"] = normalizedPath;
+
+            if (!isValidFsPath(normalizedPath) || normalizedPath == "/")
+            {
+                result["action"] = "invalid";
+                result["reason"] = "invalid-path";
+                continue;
+            }
+
+            String expectedSha256 = fileObj["sha256"].is<const char *>() ? String(fileObj["sha256"].as<const char *>()) : String("");
+            expectedSha256.trim();
+            expectedSha256.toLowerCase();
+            if (!isLowerHexString(expectedSha256, OTA_SHA256_HEX_LENGTH))
+            {
+                result["action"] = "invalid";
+                result["reason"] = "invalid-hash";
+                continue;
+            }
+
+            const bool exists = LittleFS.exists(normalizedPath);
+            result["exists"] = exists;
+            result["protected"] = isProtectedRuntimeFile(normalizedPath);
+
+            if (isProtectedRuntimeFile(normalizedPath))
+            {
+                result["action"] = "preserve";
+                result["reason"] = "protected-runtime-file";
+                continue;
+            }
+
+            if (!exists)
+            {
+                result["action"] = "upload";
+                result["reason"] = "missing";
+                continue;
+            }
+
+            String currentSha256;
+            if (!computeLittleFsFileSha256(normalizedPath, currentSha256))
+            {
+                result["action"] = "upload";
+                result["reason"] = "hash-read-failed";
+                continue;
+            }
+
+            result["currentSha256"] = currentSha256;
+            if (currentSha256 == expectedSha256)
+            {
+                result["action"] = "skip";
+                result["reason"] = "hash-match";
+            }
+            else
+            {
+                result["action"] = "upload";
+                result["reason"] = "hash-mismatch";
+            }
+        }
+
+        sendSuccessResponse(req, responseDoc); });
+}
+
 /**
  * @brief 处理POST /api/files 的文件上传回调。
  * @param request  HTTP请求
@@ -1641,6 +1883,20 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         if (!uploadState.path.endsWith("/"))
             uploadState.path += "/";
 
+        if (!isValidFsPath(uploadState.path))
+        {
+            LOG_W("文件上传失败: 目标路径无效: %s", uploadState.path.c_str());
+            uploadState.error = true;
+            return;
+        }
+
+        if (!ensureDirectoryExistsRecursive(uploadState.path))
+        {
+            LOG_W("文件上传失败: 无法创建目标目录: %s", uploadState.path.c_str());
+            uploadState.error = true;
+            return;
+        }
+
         File targetDir = LittleFS.open(uploadState.path);
         if (!targetDir || !targetDir.isDirectory())
         {
@@ -1654,7 +1910,19 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
 
         fileUploadTargetPath = normalizePath(uploadState.path + filename);
         fileUploadTempPath = fileUploadTargetPath + ".uploading";
-        LittleFS.remove(fileUploadTempPath);
+        if (!isValidFsPath(fileUploadTargetPath))
+        {
+            LOG_W("文件上传失败: 目标文件路径无效: %s", fileUploadTargetPath.c_str());
+            uploadState.error = true;
+            return;
+        }
+
+        if (isProtectedRuntimeFile(fileUploadTargetPath))
+        {
+            LOG_W("文件上传失败: 运行时数据文件受保护: %s", fileUploadTargetPath.c_str());
+            uploadState.error = true;
+            return;
+        }
         LOG_I("文件上传开始: %s (Content-Length: %u bytes)", fileUploadTargetPath.c_str(), request->contentLength());
 
         if (request->hasHeader(FILE_HASH_HEADER))
@@ -1758,7 +2026,6 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         const bool targetExists = LittleFS.exists(fileUploadTargetPath);
         if (targetExists)
         {
-            LittleFS.remove(backupPath);
             if (!LittleFS.rename(fileUploadTargetPath, backupPath))
             {
                 LOG_E("文件上传失败: 无法备份原文件: %s", fileUploadTargetPath.c_str());
@@ -1786,7 +2053,10 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
 
         if (targetExists)
         {
-            LittleFS.remove(backupPath);
+            if (LittleFS.exists(backupPath))
+            {
+                LittleFS.remove(backupPath);
+            }
         }
 
         uploadState.success = true;
@@ -2475,6 +2745,8 @@ void registerStaticRoutes(AsyncWebServer *server)
                { servePrecompiledFile(request, "/web/css/pages.css", "text/css"); });
     server->on("/web/js/common.js", HTTP_GET, [](AsyncWebServerRequest *request)
                { servePrecompiledFile(request, "/web/js/common.js", "application/javascript"); });
+    server->on("/web/js/vendor/fflate.bundle", HTTP_GET, [](AsyncWebServerRequest *request)
+               { servePrecompiledFile(request, "/web/js/vendor/fflate.bundle", "application/javascript"); });
     server->on("/web/js/pages/index.js", HTTP_GET, [](AsyncWebServerRequest *request)
                { servePrecompiledFile(request, "/web/js/pages/index.js", "application/javascript"); });
     server->on("/web/js/pages/wifi.js", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -2521,6 +2793,7 @@ void registerApiRoutes(AsyncWebServer *server)
     server->on("/api/system/actions/restart", HTTP_POST, handleRestartSystem);
     server->on("/api/system/firmware", HTTP_POST, handleOtaUpdateComplete, handleOtaUpdate);
     server->on("/api/filesystem", HTTP_GET, handleGetFileSystemInfo);
+    server->on("/api/files/sync-check", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleFileSyncCheck);
     server->on("/api/files/download", HTTP_GET, handleDownloadFile);
     server->on("/api/files", HTTP_GET, handleListFiles);
     server->on("/api/files", HTTP_DELETE, handleDeleteResource);

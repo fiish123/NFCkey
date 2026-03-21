@@ -765,6 +765,8 @@ void sendCardSearchCommand()
   }
 }
 
+bool webdebug = true;
+
 void setup()
 {
   // 低功耗
@@ -818,8 +820,6 @@ void setup()
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
   LOG_I("LittleFS文件系统挂载成功");
-
-  bool webdebug = true;
 
   // 加载卡片数据
   if (!loadCardsDataFromFile() || webdebug)
@@ -888,6 +888,13 @@ void loop()
     // 检查是否超过30分钟自动重启
     if (millis() - webServerStartTime >= WEB_SERVER_RESTART_INTERVAL)
     {
+      if (webdebug)
+      {
+        LOG_I("Web服务器运行超时(30min)，系统即将进入深度睡眠");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_deep_sleep_start();
+      }
+
       LOG_I("Web服务器运行超时(30min)，系统即将重启");
       vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
