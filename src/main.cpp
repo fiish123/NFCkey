@@ -66,6 +66,7 @@ float read_battery_voltage(void)
   for (int i = 0; i < 16; i++)
   {
     adc_reading += adc1_get_raw(BATTERY_ADC_CHANNEL);
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
   adc_reading /= 16;
 
@@ -94,7 +95,7 @@ void logMessage(const int level, const char *tag, const char *format, ...)
   vsnprintf(buffer, sizeof(buffer), format, args);
   va_end(args);
 
-  // 广播到 WebSocket（如果 Web 服务器正在运行）
+  // 广播到 WebSocket
   broadcastLogToWebSocket(level, tag, buffer);
 
   if (level > loglevel)
@@ -313,11 +314,15 @@ void loadServoConfig()
 // 保存舵机配置
 void saveServoConfig(uint16_t unlock, uint16_t lock)
 {
-  // 参数范围校验
-  if (unlock > 4095)
-    unlock = 4095;
-  if (lock > 4095)
-    lock = 4095;
+  // 参数范围
+  if (unlock > 1280)
+    unlock = 1280;
+  if (lock > 1280)
+    lock = 1280;
+  if (unlock < 0)
+    unlock = 0;
+  if (lock < 0)
+    lock = 0;
 
   servoPreferences.begin(PREF_NAMESPACE, false);
   servoPreferences.putUShort(PREF_UNLOCK_POS, unlock);
@@ -419,6 +424,8 @@ void Switchlock()
 
   LOG_D("舵机动作执行完成");
 
+  powermanager(2, false);
+
   isservobusy = false;
 }
 
@@ -431,6 +438,9 @@ void executeUnlock()
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
+
+  powermanager(2, false);
+
   LOG_I("API调用: 舵机解锁");
 }
 
@@ -443,6 +453,9 @@ void executeLock()
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
+
+  powermanager(2, false);
+
   LOG_I("API调用: 舵机锁定");
 }
 
@@ -455,6 +468,9 @@ void executePosition(uint16_t position)
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   isservobusy = false;
+
+  powermanager(2, false);
+
   LOG_I("API调用: 舵机移动至位置 %d", position);
 }
 
@@ -765,7 +781,7 @@ void sendCardSearchCommand()
   }
 }
 
-bool webdebug = true;
+bool webdebug = false;
 
 void setup()
 {
@@ -904,6 +920,7 @@ void loop()
 
   if (!cardLogicEnabled)
   {
+    vTaskDelay(pdMS_TO_TICKS(500));
     return;
   }
 
@@ -970,15 +987,13 @@ void loop()
       vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    powermanager(2, false);
-
     // leds[0] = CRGB::Black;
     // FastLED.show();
   }
 
   // 低电量提醒
   float voltage = read_battery_voltage();
-  if (voltage <= 3.4 and voltage > 3.2)
+  if (voltage <= 3.5 and voltage > 3.4)
   {
     LOG_W("电池电量低: %.2f V", voltage);
     // leds[0] = CRGB::Red;
@@ -987,7 +1002,7 @@ void loop()
     // leds[0] = CRGB::Black;
     // FastLED.show();
   }
-  else if (voltage <= 3.2)
+  else if (voltage <= 3.4)
   {
     LOG_W("电池电量极低: %.2f V", voltage);
     // leds[0] = CRGB::Red;
@@ -1049,6 +1064,4 @@ void loop()
   {
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  powermanager(1, false);
 }
