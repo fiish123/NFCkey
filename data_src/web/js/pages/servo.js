@@ -80,7 +80,7 @@
     
     testPositionDebounceTimer = setTimeout(() => {
       executePosition(position);
-    }, 100); // 100ms防抖延迟
+    }, 200); // 200ms防抖延迟
   }
 
   // 设置滑动条与输入框双向同步
@@ -266,33 +266,6 @@
           showToast("锁定指令已发送", "success");
         } else {
           showToast("锁定失败: " + (response.message || "未知错误"), "error");
-        }
-      })
-      .catch((err) => showToast("请求失败: " + err.message, "error"))
-      .finally(() => {
-        setTimeout(() => {
-          actionInProgress = false;
-          updateServoStatus(false);
-        }, 1500);
-      });
-  }
-
-  function position() {
-    if (actionInProgress) return;
-    actionInProgress = true;
-    updateServoStatus(true);
-    const pos = parseInt(document.getElementById("Pos").value);
-    fetch("/api/servo/actions/position", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ position: pos })
-    })
-      .then((response) => response.json())
-      .then((response) => {
-        if (response.success) {
-          showToast("位置指令已发送", "success");
-        } else {
-          showToast("执行失败: " + (response.message || "未知错误"), "error");
         }
       })
       .catch((err) => showToast("请求失败: " + err.message, "error"))

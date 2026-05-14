@@ -10,11 +10,6 @@
 #include <mbedtls/sha256.h>
 #include <vector>
 
-extern "C"
-{
-#include <esp_system.h>
-}
-
 // 声明外部变量和函数
 struct NFCcard
 {
@@ -83,6 +78,7 @@ static constexpr size_t OTA_SHA256_HEX_LENGTH = 64;
 static constexpr size_t OTA_SHA256_BYTES = 32;
 static const char *OTA_HASH_HEADER = "X-Firmware-SHA256";
 static const char *FILE_HASH_HEADER = "X-File-SHA256";
+static constexpr uint16_t SERVO_MAX_POSITION = 1280;
 
 struct OtaUploadState
 {
@@ -120,10 +116,6 @@ static AsyncWebServerRequest *jsonBodyRequest = nullptr;
 
 // WiFi测试状态管理（仍用于异步任务协调）
 static bool wifiTestRunning = false;
-static bool wifiTestSuccess = false;
-static String wifiTestResultIP = "";
-static String wifiTestErrorMessage = "";
-static uint32_t wifiTestClientId = 0;  // 发起测试的客户端ID
 static uint32_t wifiTestRequestId = 0; // 请求ID
 
 // WiFi扫描状态管理
@@ -141,7 +133,7 @@ struct WifiTestParams
     String password;
 };
 
-uint32_t uploadsize = 0; // 请求ID
+uint32_t uploadsize = 0; // 上传字节计数
 
 // =============================================================================
 // 辅助工具函数
@@ -211,7 +203,7 @@ static bool getPathParam(AsyncWebServerRequest *request, const char *paramName,
  */
 bool validateServoPosition(uint16_t position)
 {
-    return position <= 1280;
+    return position <= SERVO_MAX_POSITION;
 }
 
 /**
@@ -221,7 +213,7 @@ bool validateServoPosition(uint16_t position)
  */
 bool validateOtaFileSize(size_t size)
 {
-    return size <= 2097152;
+    return size <= (2 * 1024 * 1024);
 }
 
 static bool isLowerHexString(const String &value, size_t expectedLength)
@@ -302,6 +294,21 @@ static bool ensureDirectoryExistsRecursive(const String &directoryPath)
     return isDirectory;
 }
 
+/**
+ * @brief 将SHA256摘要（32字节）转换为小写十六进制字符串。
+ * @param digest SHA256摘要
+ * @param outHex 输出64字符十六进制字符串
+ */
+static void sha256DigestToHex(const unsigned char digest[OTA_SHA256_BYTES], String &outHex)
+{
+    char hex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
+    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
+    {
+        snprintf(&hex[i * 2], 3, "%02x", digest[i]);
+    }
+    outHex = hex;
+}
+
 static bool computeLittleFsFileSha256(const String &path, String &outHash)
 {
     File file = LittleFS.open(path, "r");
@@ -347,13 +354,7 @@ static bool computeLittleFsFileSha256(const String &path, String &outHash)
 
     mbedtls_sha256_free(&context);
 
-    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
-    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
-    {
-        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
-    }
-
-    outHash = digestHex;
+    sha256DigestToHex(digest, outHash);
     return true;
 }
 
@@ -421,13 +422,7 @@ static bool finalizeFileUploadHash(String &outHash)
         return false;
     }
 
-    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
-    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
-    {
-        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
-    }
-
-    outHash = digestHex;
+    sha256DigestToHex(digest, outHash);
     resetFileUploadHashContext();
     return true;
 }
@@ -495,13 +490,7 @@ static bool finalizeOtaHash(String &outHash)
         return false;
     }
 
-    char digestHex[(OTA_SHA256_HEX_LENGTH + 1)] = {0};
-    for (size_t i = 0; i < OTA_SHA256_BYTES; ++i)
-    {
-        snprintf(&digestHex[i * 2], 3, "%02x", digest[i]);
-    }
-
-    outHash = digestHex;
+    sha256DigestToHex(digest, outHash);
     resetOtaHashContext();
     return true;
 }
@@ -686,24 +675,10 @@ void sendApiResponse(AsyncWebServerRequest *request, const ApiResponse &response
     request->send(response.code, "application/json", response.toJson());
 }
 
-// 函数前向声明
-static void sendSuccessResponse(AsyncWebServerRequest *request);
-static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data);
-
 static void resetJsonBodyState()
 {
     jsonBodyBuffer.clear();
     jsonBodyRequest = nullptr;
-}
-
-/**
- * @brief 发送成功响应（200 OK），无额外数据。
- * @param request HTTP请求指针
- */
-static void sendSuccessResponse(AsyncWebServerRequest *request)
-{
-    JsonDocument emptyDoc;
-    sendSuccessResponse(request, emptyDoc);
 }
 
 /**
@@ -720,6 +695,16 @@ static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocume
     response.data = data;
     response.hasData = !data.isNull();
     sendApiResponse(request, response);
+}
+
+/**
+ * @brief 发送成功响应（200 OK），无额外数据。
+ * @param request HTTP请求指针
+ */
+static void sendSuccessResponse(AsyncWebServerRequest *request)
+{
+    JsonDocument emptyDoc;
+    sendSuccessResponse(request, emptyDoc);
 }
 
 /**
@@ -1394,7 +1379,6 @@ void handleWsWifiTest(AsyncWebSocketClient *client, const JsonDocument &req)
     params->password = password;
 
     wifiTestRunning = true;
-    wifiTestClientId = client->id();
     wifiTestRequestId = requestId;
 
     // 立即回复已开始
@@ -1421,9 +1405,9 @@ void handleWsWifiTestStatus(AsyncWebSocketClient *client, const JsonDocument &re
     uint32_t requestId = req["requestId"] | 0;
     JsonDocument data;
     data["running"] = wifiTestRunning;
-    data["success"] = wifiTestSuccess;
-    data["ip"] = wifiTestResultIP;
-    data["errorMessage"] = wifiTestErrorMessage;
+    data["success"] = false;
+    data["ip"] = "";
+    data["errorMessage"] = "";
     sendWsResponse(client, "wifi/testStatus", true, &data, requestId);
 }
 
@@ -1522,6 +1506,8 @@ void initWebSocket()
                       static_cast<unsigned int>(len));
                 break;
             }
+            case WS_EVT_PING:
+                break;
             case WS_EVT_PONG:
                 break;
         } });
@@ -1752,20 +1738,17 @@ void handleDownloadFile(AsyncWebServerRequest *request)
     LOG_D("GET /api/files/download 请求，路径: %s", path.c_str());
 
     File file = LittleFS.open(path, "r");
-    if (!file || file.isDirectory())
+    if (!file)
     {
-        if (file)
-            file.close();
-        if (!file)
-        {
-            LOG_E("文件下载失败: 文件不存在: %s", path.c_str());
-        }
-        else
-        {
-            LOG_E("文件下载失败: 路径不是文件: %s", path.c_str());
-        }
-        sendErrorResponse(request, !file ? 404 : 400,
-                          !file ? "文件未找到" : "路径不是文件");
+        LOG_E("文件下载失败: 文件不存在: %s", path.c_str());
+        sendErrorResponse(request, 404, "文件未找到");
+        return;
+    }
+    if (file.isDirectory())
+    {
+        file.close();
+        LOG_E("文件下载失败: 路径不是文件: %s", path.c_str());
+        sendErrorResponse(request, 400, "路径不是文件");
         return;
     }
 
@@ -2929,7 +2912,7 @@ void broadcastLogToWebSocket(int level, const char *tag, const char *message)
         return;
 
     unsigned long timestamp = millis();
-    uint32_t currentSessionId = logSessionId;
+    uint32_t currentSessionId = 0;
     uint32_t logId = 0;
 
     portENTER_CRITICAL(&logCacheMux);

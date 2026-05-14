@@ -3,10 +3,9 @@
 
 #include <Arduino.h>
 
-// 日志级别配置
-extern const int loglevel;
-
 // 日志级别：0=ERROR, 1=WARN, 2=INFO, 3=DEBUG, 4=VERBOSE
+static constexpr int loglevel = 2;
+
 #define LOG_E(...) logMessage(0, "ERROR", __VA_ARGS__)
 #define LOG_W(...) logMessage(1, "WARN", __VA_ARGS__)
 #define LOG_I(...) logMessage(2, "INFO", __VA_ARGS__)
