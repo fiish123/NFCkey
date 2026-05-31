@@ -415,16 +415,9 @@ void sendServoPosition(unsigned int in)
 // 舵机动作
 bool isservobusy = false;
 
-void Switchlock(uint8_t count)
+void Switchlock()
 {
   isservobusy = true;
-
-  if (count < 1)
-  {
-    // au:accept
-    addTolist(3);
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
 
   // UNLOCKING
   sendServoPosition(unlockPosition);
@@ -654,7 +647,14 @@ void loop()
         // 舵机动作
         if (!isservobusy)
         {
-          Switchlock(consecutiveCardCount);
+
+          if (consecutiveCardCount < 1)
+          {
+            // au:accept
+            addTolist(3);
+            vTaskDelay(pdMS_TO_TICKS(10));
+          }
+          Switchlock();
         }
       }
       else
