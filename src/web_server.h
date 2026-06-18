@@ -60,20 +60,6 @@ struct FileUploadState
     }
 };
 
-// API响应结构体（保留用于HTTP API）
-struct ApiResponse
-{
-    bool success;
-    int code;
-    String message;
-    JsonDocument data;
-    bool hasData;
-
-    ApiResponse() : success(false), code(200), message(""), hasData(false) {}
-
-    String toJson() const;
-};
-
 // 初始化文件系统
 bool initFileSystem();
 

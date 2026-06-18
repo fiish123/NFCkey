@@ -282,7 +282,7 @@ void playerList(void *parameter)
 
     while (playlistcount - playlistindex > 0)
     {
-      isplaying = true;
+      //isplaying = true;
       playAudio(playlist[playlistindex]);
       playlistindex++;
     }
@@ -304,6 +304,8 @@ void playerList(void *parameter)
 // 添加播放任务到列表
 void addTolist(unsigned int in)
 {
+  isplaying = true;
+
   powermanager(1, true);
 
   playlist[playlistcount] = in;
@@ -589,6 +591,7 @@ void loop()
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_light_sleep_start();
     LOG_D("已唤醒");
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
   else if (digitalRead(IRQ) != HIGH)
   {
@@ -710,19 +713,34 @@ void loop()
     }
   }
 
+  while (isplaying)
+  {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
   // 低电量提醒
   float voltage = read_battery_voltage();
   if (voltage <= 3.5 and voltage > 3.4)
   {
     LOG_W("电池电量低: %.2f V", voltage);
     // au:lowbat
+    vTaskDelay(pdMS_TO_TICKS(1000));
     addTolist(6);
   }
   else if (voltage <= 3.4)
   {
     LOG_W("电池电量极低: %.2f V", voltage);
     // au:lowlowbat
-    addTolist(7);
+    for (size_t i = 0; i < 3; i++)
+    {
+      addTolist(7);
+      vTaskDelay(pdMS_TO_TICKS(50));
+      while (isplaying)
+      {
+        vTaskDelay(pdMS_TO_TICKS(500));
+      }
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
   }
 
   // 等待音频完成播放

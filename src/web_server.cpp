@@ -34,7 +34,9 @@ WebServerMode webserverMode = WS_MODE_OFF;
 // WebSocket 服务器实例
 AsyncWebSocket *ws = nullptr;
 std::deque<LogEntry> logCache;
-static constexpr size_t LOG_CACHE_SIZE = 256;
+// 内存优化：由 256 降为 128。每条 LogEntry 约 160 字节，减少约 20KB 堆占用；
+// 回放逻辑的 fallback(64)/max-batch(64) 在 128 容量下仍可完整工作。
+static constexpr size_t LOG_CACHE_SIZE = 128;
 static constexpr size_t LOG_REPLAY_FALLBACK_SIZE = 64;
 static constexpr size_t LOG_REPLAY_MAX_BATCH_SIZE = 64;
 static constexpr size_t LOG_SINGLE_ENTRY_JSON_BUFFER_SIZE = 384;
@@ -638,80 +640,90 @@ static bool connectToWiFi(const String &ssid, const String &password, int maxAtt
 }
 
 // =============================================================================
-// API 响应处理（仅用于HTTP API，保持不变）
+// API 响应处理（HTTP API）
+//
+// 内存优化说明：
+// - 不再使用 ApiResponse 中间结构（曾内嵌 JsonDocument data 成员，并在
+//   toJson() 中再次构建 JsonDocument，导致每次响应产生 2~3 个文档与多次深拷贝）。
+// - 现采用直接内联序列化：data 文档仅序列化一次拼入响应字符串，避免跨文档深拷贝
+//   （ArduinoJson 7 中 docA["data"]=docB 会整树深拷贝，且 serializeJson(doc,String)
+//    会覆盖而非追加字符串，故先序列化 data 到临时字符串再拼接）。
 // =============================================================================
 
 /**
- * @brief 将ApiResponse对象序列化为JSON字符串。
- * @return JSON字符串
+ * @brief 将一个 C 字符串以合法 JSON 字符串形式（含两侧引号）追加到 out。
+ *        用于在不构造 JsonDocument 的情况下安全地内联字段，保证转义正确。
  */
-String ApiResponse::toJson() const
+static void appendJsonString(String &out, const char *value)
 {
-    JsonDocument doc;
-    doc["success"] = success;
-    doc["message"] = message;
-
-    if (hasData)
+    out += '"';
+    if (value)
     {
-        doc["data"] = data; // 将 data 赋值给 "data" 字段
+        for (const char *p = value; *p; ++p)
+        {
+            const unsigned char c = static_cast<unsigned char>(*p);
+            switch (c)
+            {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (c < 0x20)
+                {
+                    char esc[8];
+                    snprintf(esc, sizeof(esc), "\\u%04x", c);
+                    out += esc;
+                }
+                else
+                {
+                    out += static_cast<char>(c);
+                }
+                break;
+            }
+        }
     }
-    else
-    {
-        doc["data"] = nullptr; // 显式设置为 null
-    }
-
-    String response;
-    serializeJson(doc, response);
-    return response;
-}
-
-/**
- * @brief 发送JSON格式的API响应。
- * @param request  HTTP请求指针
- * @param response ApiResponse对象
- */
-void sendApiResponse(AsyncWebServerRequest *request, const ApiResponse &response)
-{
-    request->send(response.code, "application/json", response.toJson());
+    out += '"';
 }
 
 static void resetJsonBodyState()
 {
     jsonBodyBuffer.clear();
+    jsonBodyBuffer.shrink_to_fit(); // 释放上一次请求体缓冲占用的堆内存
     jsonBodyRequest = nullptr;
 }
 
 /**
  * @brief 发送成功响应（200 OK），带附加数据。
- * @param request HTTP请求指针
- * @param data    可选的附加数据（JSON文档）
+ *        data 直接序列化拼入响应，不再深拷贝到第二个 JsonDocument。
  */
 static void sendSuccessResponse(AsyncWebServerRequest *request, const JsonDocument &data)
 {
-    ApiResponse response;
-    response.success = true;
-    response.code = 200;
-    response.message = "Success";
-    response.data = data;
-    response.hasData = !data.isNull();
-    sendApiResponse(request, response);
+    String dataStr;
+    dataStr.reserve(measureJson(data));
+    serializeJson(data, dataStr); // 空文档将输出 "null"，与历史 hasData=false 行为一致
+
+    String response;
+    response.reserve(dataStr.length() + 48);
+    response += "{\"success\":true,\"message\":\"Success\",\"data\":";
+    response += dataStr;
+    response += '}';
+    request->send(200, "application/json", response);
 }
 
 /**
- * @brief 发送成功响应（200 OK），无额外数据。
- * @param request HTTP请求指针
+ * @brief 发送成功响应（200 OK），无额外数据。使用字面量，零 JsonDocument 分配。
  */
 static void sendSuccessResponse(AsyncWebServerRequest *request)
 {
-    JsonDocument emptyDoc;
-    sendSuccessResponse(request, emptyDoc);
+    request->send(200, "application/json", "{\"success\":true,\"message\":\"Success\",\"data\":null}");
 }
 
 /**
- * @brief 发送错误响应。
- * @param request HTTP请求指针
- * @param code    HTTP状态码
- * @param message 错误信息
+ * @brief 发送错误响应。message 经 appendJsonString 安全转义后内联，无需 JsonDocument。
  */
 static void sendErrorResponse(AsyncWebServerRequest *request, int code, const String &message)
 {
@@ -724,12 +736,12 @@ static void sendErrorResponse(AsyncWebServerRequest *request, int code, const St
         LOG_W("API错误响应: HTTP %d - %s", code, message.c_str());
     }
 
-    ApiResponse response;
-    response.success = false;
-    response.code = code;
-    response.message = message;
-    response.hasData = false;
-    sendApiResponse(request, response);
+    String response;
+    response.reserve(message.length() + 64);
+    response += "{\"success\":false,\"message\":";
+    appendJsonString(response, message.c_str());
+    response += ",\"data\":null}";
+    request->send(code, "application/json", response);
 }
 
 // =============================================================================
@@ -792,12 +804,14 @@ static void handleJsonBody(AsyncWebServerRequest *request, uint8_t *data, size_t
 // =============================================================================
 
 /**
- * @brief 通过WebSocket向指定客户端发送JSON响应。
+ * @brief 通过WebSocket向指定客户端发送JSON响应（内联序列化）。
  * @param client 客户端指针
- * @param action 动作类型（与请求对应）
+ * @param action 动作类型（内部固定字面量，如 "wifi/getInfo"，无需转义）
  * @param success 是否成功
  * @param data 附加数据（可选）
  * @param requestId 请求ID（若请求中提供）
+ *
+ * 内存优化：data 直接序列化拼入响应字符串，避免 `doc["data"]=*data` 触发的整树深拷贝。
  */
 static void sendWsResponse(AsyncWebSocketClient *client, const String &action, bool success,
                            const JsonDocument *data = nullptr, uint32_t requestId = 0)
@@ -805,21 +819,38 @@ static void sendWsResponse(AsyncWebSocketClient *client, const String &action, b
     if (!client)
         return;
 
-    JsonDocument doc;
-    doc["action"] = action;
-    doc["success"] = success;
-    if (requestId != 0)
-        doc["requestId"] = requestId;
-    if (data && !data->isNull())
-        doc["data"] = *data;
+    String dataStr;
+    size_t dataLen = 0;
+    const bool hasData = data && !data->isNull();
+    if (hasData)
+    {
+        dataLen = measureJson(*data);
+        dataStr.reserve(dataLen);
+        serializeJson(*data, dataStr);
+    }
 
     String response;
-    serializeJson(doc, response);
+    response.reserve(action.length() + dataLen + 64); // +64 覆盖 envelope + 可选 requestId(<=10位)
+    response += "{\"action\":\"";
+    response += action;
+    response += "\",\"success\":";
+    response += success ? "true" : "false";
+    if (requestId != 0)
+    {
+        response += ",\"requestId\":";
+        response += requestId;
+    }
+    response += ",\"data\":";
+    if (hasData)
+        response += dataStr; // const 引用追加，避免拷贝整个 data 载荷
+    else
+        response += "null";
+    response += '}';
     client->text(response);
 }
 
 /**
- * @brief 发送错误响应。
+ * @brief 发送错误响应（内联序列化，message 经 appendJsonString 安全转义）。
  */
 static void sendWsError(AsyncWebSocketClient *client, const String &action,
                         const String &message, uint32_t requestId = 0)
@@ -829,9 +860,24 @@ static void sendWsError(AsyncWebSocketClient *client, const String &action,
           action.c_str(),
           requestId,
           message.c_str());
-    JsonDocument errData;
-    errData["message"] = message;
-    sendWsResponse(client, action, false, &errData, requestId);
+
+    if (!client)
+        return;
+
+    String response;
+    response.reserve(action.length() + message.length() + 80);
+    response += "{\"action\":\"";
+    response += action;
+    response += "\",\"success\":false";
+    if (requestId != 0)
+    {
+        response += ",\"requestId\":";
+        response += requestId;
+    }
+    response += ",\"data\":{\"message\":";
+    appendJsonString(response, message.c_str());
+    response += "}}";
+    client->text(response);
 }
 
 static void appendLogJson(JsonArray logsArray, const LogEntry &entry)
@@ -962,30 +1008,31 @@ void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req)
 
     portEXIT_CRITICAL(&logCacheMux);
 
-    JsonDocument data;
-    JsonArray logsArray = data["logs"].to<JsonArray>();
-    data["sessionId"] = logSessionId;
-    data["sessionChanged"] = sessionChanged;
-    data["mode"] = mode;
-    data["oldestAvailableLogId"] = oldestAvailableLogId;
-    data["latestAvailableLogId"] = latestAvailableLogId;
-
-    if (hasLastLogId)
-    {
-        data["requestedLastLogId"] = requestedLastLogId;
-    }
-
-    for (size_t i = 0; i < selectedLogCount; ++i)
-    {
-        appendLogJson(logsArray, selectedLogs[i]);
-    }
-
+    // 内存优化：在单个 response 文档内就地创建嵌套的 data 对象，
+    // 避免 `response["data"] = data` 触发的整树深拷贝（可能含 64 条日志）。
     JsonDocument response;
     response["action"] = "log/replay";
     response["success"] = true;
     if (requestId != 0)
         response["requestId"] = requestId;
-    response["data"] = data;
+
+    JsonObject dataObj = response["data"].to<JsonObject>();
+    dataObj["sessionId"] = logSessionId;
+    dataObj["sessionChanged"] = sessionChanged;
+    dataObj["mode"] = mode;
+    dataObj["oldestAvailableLogId"] = oldestAvailableLogId;
+    dataObj["latestAvailableLogId"] = latestAvailableLogId;
+
+    if (hasLastLogId)
+    {
+        dataObj["requestedLastLogId"] = requestedLastLogId;
+    }
+
+    JsonArray logsArray = dataObj["logs"].to<JsonArray>();
+    for (size_t i = 0; i < selectedLogCount; ++i)
+    {
+        appendLogJson(logsArray, selectedLogs[i]);
+    }
 
     String payload;
     const size_t payloadLength = measureJson(response);
@@ -1099,14 +1146,15 @@ void wifiScanTask(void *pvParameters)
     }
 
 
-    JsonDocument doc;
-    bool success = true;
-    String errorMessage = "";
+    // 内存优化：直接在单个 resultDoc 内就地构建 data（数组或对象），
+    // 避免先构建独立 doc 再用 resultDoc["data"]=doc 对整个 networks 数组深拷贝。
+    JsonDocument resultDoc;
+    resultDoc["action"] = "wifi/scanResult";
 
+    bool success = true;
     if (n > 0)
     {
-        // 找到网络，填充结果
-        JsonArray networks = doc.to<JsonArray>();
+        JsonArray networks = resultDoc["data"].to<JsonArray>();
         for (int i = 0; i < n; i++)
         {
             JsonObject net = networks.add<JsonObject>();
@@ -1122,34 +1170,22 @@ void wifiScanTask(void *pvParameters)
     {
         // 未找到网络 - 返回空数组
         LOG_D("WiFi扫描完成，未发现可用网络");
-        doc.to<JsonArray>();
+        resultDoc["data"].to<JsonArray>();
     }
     else
     {
         // 扫描失败
         success = false;
-        errorMessage = "扫描超时或失败";
-        LOG_W("WiFi扫描失败: %s", errorMessage.c_str());
+        LOG_W("WiFi扫描失败: %s", "扫描超时或失败");
+        JsonObject errObj = resultDoc["data"].to<JsonObject>();
+        errObj["message"] = "扫描超时或失败";
     }
+
+    resultDoc["success"] = success;
 
     if (n > 0)
     {
         LOG_I("WiFi扫描完成，发现 %d 个网络", n);
-    }
-
-    // 广播结果给所有客户端
-    JsonDocument resultDoc;
-    resultDoc["action"] = "wifi/scanResult";
-    resultDoc["success"] = success;
-    if (success)
-    {
-        resultDoc["data"] = doc;
-    }
-    else
-    {
-        JsonDocument errData;
-        errData["message"] = errorMessage;
-        resultDoc["data"] = errData;
     }
 
     // 等待客户端连接
@@ -1159,8 +1195,9 @@ void wifiScanTask(void *pvParameters)
     {
         if (ws && ws->count() > 0)
         {
-            // 有客户端连接，发送结果
+            // 有客户端连接，发送结果（预分配容量，避免序列化期间多次 realloc）
             String response;
+            response.reserve(measureJson(resultDoc));
             serializeJson(resultDoc, response);
             ws->textAll(response);
             sent = true;
@@ -1260,7 +1297,7 @@ void wifiTestTask(void *pvParameters)
     WiFi.disconnect(true);
 
     bool wifisuccess = false;
-    String errorMessage = "";
+    const char *errorMessage = ""; // 仅指向静态字面量，无需 String 堆分配
 
     if (connectToWiFi(ssid, password, 20))
     {
@@ -1281,19 +1318,23 @@ void wifiTestTask(void *pvParameters)
             errorMessage = "错误：连接超时";
             break;
         }
-        LOG_W("WiFi连接测试失败: SSID=%s, 错误码=%d, 原因=%s", ssid.c_str(), WiFi.status(), errorMessage.c_str());
+        LOG_W("WiFi连接测试失败: SSID=%s, 错误码=%d, 原因=%s", ssid.c_str(), WiFi.status(), errorMessage);
     }
 
-    // 准备结果数据
-    JsonDocument resultData;
-    resultData["success"] = wifisuccess;
+    // 内存优化：直接在单个 resultDoc 内就地构建 data 对象，
+    // 避免 resultDoc["data"]=resultData 的整树深拷贝。
+    JsonDocument resultDoc;
+    resultDoc["action"] = "wifi/testResult";
+    resultDoc["success"] = true; // 信封层表示传输成功，业务结果见 data.success
+    JsonObject dataObj = resultDoc["data"].to<JsonObject>();
+    dataObj["success"] = wifisuccess;
     if (wifisuccess)
     {
-        resultData["ip"] = WiFi.localIP().toString();
+        dataObj["ip"] = WiFi.localIP().toString();
     }
     else
     {
-        resultData["errorMessage"] = errorMessage;
+        dataObj["errorMessage"] = errorMessage; // errorMessage 指向静态字面量
     }
 
     // 断开测试网络
@@ -1311,12 +1352,6 @@ void wifiTestTask(void *pvParameters)
         }
     }
 
-    // 改为全局广播（模仿扫描结果的方式）
-    JsonDocument resultDoc;
-    resultDoc["action"] = "wifi/testResult";
-    resultDoc["success"] = true;
-    resultDoc["data"] = resultData;
-
     // 等待客户端连接
     int waitTimeout = 20;
     bool sent = false;
@@ -1324,8 +1359,9 @@ void wifiTestTask(void *pvParameters)
     {
         if (ws && ws->count() > 0)
         {
-            // 有客户端连接，发送结果
+            // 有客户端连接，发送结果（预分配容量，避免序列化期间多次 realloc）
             String response;
+            response.reserve(measureJson(resultDoc));
             serializeJson(resultDoc, response);
             ws->textAll(response);
             sent = true;
@@ -1459,38 +1495,38 @@ void initWebSocket()
                         return;
                     }
 
-                    String msg = String((char*)data, len);
-
+                    // 内存优化：直接从原始缓冲解析（免去 String msg 拷贝），
+                    // action 以 const char* 零拷贝读取（指向文档内存），用 strcmp 比对。
                     JsonDocument req;
-                    DeserializationError error = deserializeJson(req, msg);
+                    DeserializationError error = deserializeJson(req, data, len);
                     if (error) {
                         LOG_E("JSON解析错误: %s", error.c_str());
                         return;
                     }
 
-                    if (!req["action"].is<const char*>()) {
+                    const char *action = req["action"].as<const char *>();
+                    if (!action) {
                         LOG_W("WebSocket消息缺少action字段");
                         return;
                     }
 
-                    String action = req["action"].as<String>();
                     // 分发到对应处理函数
-                    if (action == "wifi/getInfo") {
+                    if (strcmp(action, "wifi/getInfo") == 0) {
                         handleWsWifiGetInfo(client, req);
-                    } else if (action == "wifi/saveConfig") {
+                    } else if (strcmp(action, "wifi/saveConfig") == 0) {
                         handleWsWifiSaveConfig(client, req);
-                    } else if (action == "wifi/clearConfig") {
+                    } else if (strcmp(action, "wifi/clearConfig") == 0) {
                         handleWsWifiClearConfig(client, req);
-                    } else if (action == "wifi/scan") {
+                    } else if (strcmp(action, "wifi/scan") == 0) {
                         handleWsWifiScan(client, req);
-                    } else if (action == "wifi/test") {
+                    } else if (strcmp(action, "wifi/test") == 0) {
                         handleWsWifiTest(client, req);
-                    } else if (action == "wifi/testStatus") {
+                    } else if (strcmp(action, "wifi/testStatus") == 0) {
                         handleWsWifiTestStatus(client, req);
-                    } else if (action == "log/replay") {
+                    } else if (strcmp(action, "log/replay") == 0) {
                         handleWsLogReplay(client, req);
                     } else {
-                        LOG_W("未知的WebSocket action: %s", action.c_str());
+                        LOG_W("未知的WebSocket action: %s", action);
                     }
                 }
                 break;
