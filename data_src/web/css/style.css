@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
-
+/* 字体说明：移除外部 Google Fonts 依赖（设备在 AP 模式下无法访问外网，
+   外部 @import 会阻塞渲染导致白屏）。改用系统字体栈，加载即时且离线可用。 */
 :root {
     /* 配色系统 - 优化浅色模式 */
     --color-primary: #0891B2;
@@ -62,9 +62,9 @@
     --transition-base: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     --transition-smooth: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     
-    /* 字体 */
-    --font-heading: 'Fira Code', 'Monaco', 'Consolas', monospace;
-    --font-body: 'Fira Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* 字体 - 优先使用系统字体，含中文回退以保证离线可用与一致性 */
+    --font-heading: ui-monospace, 'Fira Code', 'SF Mono', 'Monaco', 'Consolas', 'Courier New', monospace;
+    --font-body: 'Fira Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Noto Sans CJK SC', sans-serif;
 }
 
 * {
@@ -380,6 +380,26 @@ h2 {
 }
 
 .storage-info .info-text span {
+    font-weight: 600;
+}
+
+/* 存储信息统计行（files 页）- 与 .info-row 保持一致的键值对排版 */
+.storage-info .storage-stats {
+    font-size: 14px;
+    color: var(--color-text);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) 0;
+}
+
+.storage-info .storage-stats + .storage-stats {
+    border-top: 1px solid var(--color-border-light);
+}
+
+.storage-info .storage-stats strong {
     font-weight: 600;
 }
 

@@ -1092,6 +1092,68 @@
     margin-right: auto;
 }
 
+/* OTA 系统信息/升级包摘要 - 键值对网格，复用首页 info-row 视觉语言 */
+#page-ota .system-info-grid {
+    display: flex;
+    flex-direction: column;
+}
+
+#page-ota .info-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+    font-size: 14px;
+    color: var(--color-text-muted);
+}
+
+#page-ota .info-item:not(:last-child) {
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+#page-ota .info-item strong {
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+#page-ota .info-item span {
+    font-family: var(--font-heading);
+    color: var(--color-text-secondary);
+    text-align: right;
+    word-break: break-all;
+}
+
+/* OTA 注意事项列表 - 去除默认圆点，使用主题色圆点标记 */
+#page-ota .note-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+#page-ota .note-list li {
+    position: relative;
+    padding-left: var(--spacing-lg);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-text-muted);
+}
+
+#page-ota .note-list li::before {
+    content: '';
+    position: absolute;
+    left: var(--spacing-xs);
+    top: 9px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    opacity: 0.7;
+}
+
 /* ==================== 连接测试进度指示器 ==================== */
 #page-wifi .connection-progress {
     background: linear-gradient(135deg, rgba(236, 254, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%);

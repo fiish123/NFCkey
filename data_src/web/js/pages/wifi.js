@@ -129,7 +129,7 @@
             } else {
                 const errorMessage = message.data?.message || '未找到WiFi网络';
                 wifiList.innerHTML = `
-                    <p style="text-align: center; color: var(--text-secondary);">${escapeHtml(errorMessage)}</p>
+                    <p style="text-align: center; color: var(--color-text-secondary);">${escapeHtml(errorMessage)}</p>
                     <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
                         重新扫描
                     </button>
@@ -191,7 +191,7 @@
         
         if (networks.length === 0) {
             wifiList.innerHTML = `
-                <p style="text-align: center; color: var(--text-secondary);">未找到WiFi网络</p>
+                <p style="text-align: center; color: var(--color-text-secondary);">未找到WiFi网络</p>
                 <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
                     重新扫描
                 </button>
