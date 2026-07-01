@@ -106,13 +106,13 @@ void handleOtaUpdateComplete(AsyncWebServerRequest *request);
 void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 
 // 舵机控制函数声明
-extern bool isservobusy;
+extern volatile bool isservobusy;
 void loadServoConfig();
 void saveServoConfig(uint16_t unlock, uint16_t lock);
 void getServoConfig(uint16_t &unlock, uint16_t &lock);
-void executeUnlock();
-void executeLock();
-void executePosition(uint16_t position);
+bool executeUnlock();
+bool executeLock();
+bool executePosition(uint16_t position);
 
 extern void addTolist(unsigned int in);
 

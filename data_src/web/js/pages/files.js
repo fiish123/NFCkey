@@ -17,6 +17,16 @@
         loadStorageInfo();
         loadSystemInfo();
         initUploadInteractions();
+
+        // WebSocket 重连后自动刷新存储与文件列表（去抖：2s 内的重复事件忽略）
+        let lastWsRefreshTs = 0;
+        document.addEventListener('ws-connected', function() {
+            const now = Date.now();
+            if (now - lastWsRefreshTs < 2000) return;
+            lastWsRefreshTs = now;
+            loadStorageInfo();
+            loadList(currentPath);
+        });
     }
 
     function loadSystemInfo() {
@@ -103,7 +113,9 @@
                 document.getElementById('freeStoragePercent').textContent = data.freePercent;
                 
                 const progressBar = document.getElementById('storageProgressBar');
-                progressBar.style.width = (100 - data.freePercent) + '%';
+                const usedPercent = 100 - data.freePercent;
+                progressBar.style.width = usedPercent + '%';
+                progressBar.setAttribute('aria-valuenow', String(usedPercent));
                 
                 progressBar.className = 'progress-bar';
                 if (data.freePercent < 20) {
@@ -284,6 +296,10 @@
         if (uploadProgressBar) uploadProgressBar.style.width = '0%';
         if (uploadProgressText) uploadProgressText.textContent = '0%';
 
+        // 防重复提交：上传期间禁用上传触发区域
+        const uploadArea = document.getElementById('uploadArea');
+        setButtonLoading(uploadArea, true);
+
         // 使用 XMLHttpRequest 支持上传进度
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/files?path=' + encodeURIComponent(currentPath), true);
@@ -302,6 +318,7 @@
 
         // 上传完成
         xhr.onload = function() {
+            setButtonLoading(uploadArea, false);
             if (xhr.status === 200) {
                 showToast('上传成功', 'success');
                 resetSelectedUploadArea();
@@ -326,6 +343,7 @@
 
         // 上传错误
         xhr.onerror = function() {
+            setButtonLoading(uploadArea, false);
             showToast('上传出错: 网络错误', 'error');
             resetSelectedUploadArea();
             // 隐藏进度条

@@ -2145,7 +2145,12 @@ void handleServoUnlock(AsyncWebServerRequest *request)
         sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
-    executeUnlock();
+    if (!executeUnlock())
+    {
+        LOG_W("舵机解锁失败: 舵机忙碌");
+        sendErrorResponse(request, 409, "舵机忙碌");
+        return;
+    }
     sendSuccessResponse(request);
 }
 
@@ -2161,7 +2166,12 @@ void handleServoLock(AsyncWebServerRequest *request)
         sendErrorResponse(request, 409, "舵机忙碌");
         return;
     }
-    executeLock();
+    if (!executeLock())
+    {
+        LOG_W("舵机锁定失败: 舵机忙碌");
+        sendErrorResponse(request, 409, "舵机忙碌");
+        return;
+    }
     sendSuccessResponse(request);
 }
 
@@ -2204,7 +2214,11 @@ static void handleServoPosition(AsyncWebServerRequest *request, uint8_t *data,
             return;
         }
 
-        executePosition(position);
+        if (!executePosition(position))
+        {
+            sendErrorResponse(req, 409, "舵机忙碌");
+            return;
+        }
         sendSuccessResponse(req); });
 }
 

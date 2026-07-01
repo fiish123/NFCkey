@@ -8,6 +8,7 @@
   let pendingPosition = null;    // 待执行的位置
   let retryCount = 0;          // 重试次数
   let isWaiting = false;        // 是否在等待中
+  let inFlight = false;          // 是否有请求正在传输中
   const MAX_RETRY = 10;        // 最大重试次数
   const RETRY_DELAY = 500;     // 重试延迟(ms)
 
@@ -17,8 +18,9 @@
     setupSliderSync();
   }
 
-  // 执行位置控制（带自动重试）
+  // 执行位置控制（带自动重试 + 在途请求保护）
   function executePosition(position) {
+    inFlight = true;
     fetch("/api/servo/actions/position", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -26,21 +28,26 @@
     })
       .then((response) => response.json())
       .then((response) => {
+        inFlight = false;
         if (response.success) {
           isWaiting = false;
-          pendingPosition = null;
           retryCount = 0;
+          // 传输期间若有更新的目标位置，立即补发一次
+          if (pendingPosition !== null) {
+            const next = pendingPosition;
+            pendingPosition = null;
+            executePosition(next);
+          }
         } else {
           if (response.code === 409) {
             // 舵机忙碌，加入队列等待重试
-            pendingPosition = position;
             isWaiting = true;
             retryCount++;
-            
+
             if (retryCount <= MAX_RETRY) {
               showToast("舵机忙碌，等待重试 (" + retryCount + "/" + MAX_RETRY + ")...", "warning");
               setTimeout(() => {
-                executePosition(pendingPosition);
+                executePosition(pendingPosition !== null ? pendingPosition : position);
               }, RETRY_DELAY);
             } else {
               // 超时
@@ -60,6 +67,7 @@
       })
       .catch((err) => {
         // 网络错误，不重试
+        inFlight = false;
         isWaiting = false;
         pendingPosition = null;
         retryCount = 0;
@@ -67,17 +75,17 @@
       });
   }
 
-  // 发送测试位置指令（带防抖和队列）
+  // 发送测试位置指令（带防抖、队列和在途保护）
   function sendTestPosition(position) {
     clearTimeout(testPositionDebounceTimer);
-    
-    // 如果已经在等待舵机空闲，只更新队列中的位置
-    if (isWaiting) {
+
+    // 请求在途或正在等待舵机空闲时，仅更新待执行位置
+    if (inFlight || isWaiting) {
       pendingPosition = position;
       retryCount = 0; // 重置重试计数
       return;
     }
-    
+
     testPositionDebounceTimer = setTimeout(() => {
       executePosition(position);
     }, 200); // 200ms防抖延迟
@@ -210,6 +218,9 @@
       return;
     }
 
+    const saveBtn = document.querySelector('button[onclick="saveConfig()"]');
+    setButtonLoading(saveBtn, true);
+
     fetch("/api/servo/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -226,7 +237,8 @@
           );
         }
       })
-      .catch((err) => showToast("请求失败: " + err.message, "error"));
+      .catch((err) => showToast("请求失败: " + err.message, "error"))
+      .finally(() => setButtonLoading(saveBtn, false));
   }
 
   // 解锁

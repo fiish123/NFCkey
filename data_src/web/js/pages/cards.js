@@ -7,6 +7,15 @@ let currentCardUID = "";
 document.addEventListener("DOMContentLoaded", function () {
   loadCardsList();
   loadCardLogicConfig();
+
+  // WebSocket 重连后自动刷新卡片列表（去抖：2s 内的重复事件忽略）
+  let lastWsRefreshTs = 0;
+  document.addEventListener("ws-connected", function () {
+    const now = Date.now();
+    if (now - lastWsRefreshTs < 2000) return;
+    lastWsRefreshTs = now;
+    loadCardsList();
+  });
 });
 
 // 读取卡片
@@ -107,6 +116,9 @@ async function addCard() {
     return;
   }
 
+  const addBtn = document.querySelector('button[onclick="addCard()"]');
+  setButtonLoading(addBtn, true);
+
   // 发送添加请求
   try {
     const response = await fetch("/api/cards", {
@@ -133,11 +145,14 @@ async function addCard() {
   } catch (error) {
     console.error("添加卡片失败:", error);
     showToast("连接失败，请重试", "error");
+  } finally {
+    setButtonLoading(addBtn, false);
   }
 }
 
 // 删除卡片
 async function deleteCard(uid) {
+  const deleteBtn = document.querySelector('.card-item[data-uid="' + uid + '"] .btn-icon');
   const confirmed = await showConfirm(`确定要删除卡片 ${uid} 吗？`, {
     type: "danger",
     title: "确认删除",
@@ -147,6 +162,7 @@ async function deleteCard(uid) {
     return;
   }
 
+  setButtonLoading(deleteBtn, true);
   try {
     const response = await fetch("/api/cards?uid=" + encodeURIComponent(uid), {
       method: "DELETE",
@@ -164,6 +180,8 @@ async function deleteCard(uid) {
   } catch (error) {
     console.error("删除卡片失败:", error);
     showToast("连接失败，请重试", "error");
+  } finally {
+    setButtonLoading(deleteBtn, false);
   }
 }
 

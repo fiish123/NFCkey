@@ -8,6 +8,7 @@ const Toast = (function() {
         if (!container) {
             container = document.createElement('div');
             container.className = 'toast-container';
+            container.setAttribute('aria-live', 'polite');
             document.body.appendChild(container);
         }
         return container;
@@ -26,6 +27,7 @@ const Toast = (function() {
         const container = getContainer();
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
+        if (type === 'error' || type === 'warning') toast.setAttribute('role', 'alert');
         
         const duration = options.duration !== undefined ? options.duration : 3000;
         const title = options.title || '';
@@ -43,19 +45,14 @@ const Toast = (function() {
         }
         
         if (duration > 0) {
-            const progress = document.createElement('div');
-            progress.className = 'toast-progress';
-            progress.style.animationDuration = `${duration}ms`;
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    progress.remove();
-                }
-            }, 0);
-            html = html + progress.outerHTML;
+            html += '<div class="toast-progress"></div>';
         }
         
         toast.innerHTML = html;
         container.appendChild(toast);
+        // 可见堆叠上限 4 条，FIFO 关闭（走 removing 动画）
+        const stack = container.querySelectorAll('.toast:not(.removing)');
+        for (let i = 0; i < stack.length - 4; i++) dismiss(stack[i]);
         
         // 关闭按钮事件
         const closeBtn = toast.querySelector('.toast-close');
@@ -63,19 +60,26 @@ const Toast = (function() {
             closeBtn.addEventListener('click', () => dismiss(toast));
         }
         
-        // 自动关闭
+        // 自动关闭 + 悬停暂停（追踪剩余时间，避免 mouseleave 重置寿命导致脱节）
         let timer = null;
+        let remaining = duration;
+        let lastResume = Date.now();
         if (duration > 0) {
             timer = setTimeout(() => dismiss(toast), duration);
         }
         
-        // 鼠标悬停暂停自动关闭
         toast.addEventListener('mouseenter', () => {
-            if (timer) clearTimeout(timer);
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+                remaining = Math.max(0, remaining - (Date.now() - lastResume));
+                if (remaining <= 0) { dismiss(toast); return; }
+            }
         });
         toast.addEventListener('mouseleave', () => {
-            if (duration > 0) {
-                timer = setTimeout(() => dismiss(toast), duration);
+            if (duration > 0 && !timer && remaining > 0) {
+                lastResume = Date.now();
+                timer = setTimeout(() => dismiss(toast), remaining);
             }
         });
         
@@ -101,13 +105,6 @@ const Toast = (function() {
         toasts.forEach((toast, index) => {
             setTimeout(() => dismiss(toast), index * 100);
         });
-    }
-    
-    // HTML 转义
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
     
     return {
@@ -136,6 +133,7 @@ const Confirm = (function() {
             const title = options.title || '确认操作';
             const confirmText = options.confirmText || '确定';
             const cancelText = options.cancelText || '取消';
+            const trigger = document.activeElement;
             
             // 创建遮罩层
             const overlay = document.createElement('div');
@@ -163,6 +161,7 @@ const Confirm = (function() {
             // 按钮事件
             const cancelBtn = dialog.querySelector('.confirm-btn-cancel');
             const confirmBtn = dialog.querySelector('.confirm-btn-confirm');
+            setTimeout(() => { if (cancelBtn) cancelBtn.focus(); }, 0);
             
             cancelBtn.addEventListener('click', () => {
                 cleanup();
@@ -194,6 +193,7 @@ const Confirm = (function() {
             function cleanup() {
                 overlay.classList.add('removing');
                 dialog.classList.add('removing');
+                if (trigger && typeof trigger.focus === 'function') trigger.focus();
                 setTimeout(() => {
                     if (overlay.parentNode) {
                         overlay.parentNode.removeChild(overlay);
@@ -226,6 +226,7 @@ const Prompt = (function() {
             const placeholder = options.placeholder || '';
             const defaultValue = options.defaultValue || '';
             const maxLength = options.maxLength || 255;
+            const trigger = document.activeElement;
             
             // 创建遮罩层
             const overlay = document.createElement('div');
@@ -264,7 +265,7 @@ const Prompt = (function() {
                 if (defaultValue) {
                     input.select();
                 }
-            }, 100);
+            }, 0);
             
             // 按钮事件
             const cancelBtn = dialog.querySelector('.confirm-btn-cancel');
@@ -310,6 +311,7 @@ const Prompt = (function() {
             function cleanup() {
                 overlay.classList.add('removing');
                 dialog.classList.add('removing');
+                if (trigger && typeof trigger.focus === 'function') trigger.focus();
                 setTimeout(() => {
                     if (overlay.parentNode) {
                         overlay.parentNode.removeChild(overlay);
@@ -375,7 +377,7 @@ function waitForWebSocketReady(timeout = 15000) {
 
         const handleStateChanged = (event) => {
             const detail = event.detail || {};
-            if (detail.state === WS_STATE.DISCONNECTED && detail.attempt >= WS_MAX_RECONNECT_ATTEMPTS) {
+            if (detail.state === WS_STATE.DISCONNECTED) {
                 settle(reject, new Error(detail.reason || 'WebSocket 连接失败'));
             }
         };
@@ -628,7 +630,21 @@ function initProgressAnimation() {
 // 通用fetch错误处理
 function handleFetchError(err) {
     console.error('请求失败:', err);
-    return '请求失败: ' + (err.message || err);
+    return categorizeError(err);
+}
+
+// 错误归类（仅生成中文文案，无类层级）：网络断开 / 请求超时 / 服务器错误
+function categorizeError(err) {
+    const m = String((err && err.message) || err || '').toLowerCase();
+    return /超时|timeout/.test(m) ? '请求超时，请稍后重试'
+        : /未连接|断开|network|unreachable|failed to fetch/.test(m) ? '网络已断开，请检查连接'
+        : '服务器错误，请稍后重试';
+}
+
+function setButtonLoading(btn, loading) {
+    if (!btn) return;
+    btn.classList.toggle('btn-loading', !!loading);
+    btn.disabled = !!loading;
 }
 
 // ==================== 页面过渡效果 ====================
@@ -675,8 +691,11 @@ let wsReconnectTimer = null;
 let wsReconnectAttempts = 0;
 let wsReconnectEnabled = true;
 let wsActiveConnectionId = 0;
-const WS_MAX_RECONNECT_ATTEMPTS = 10;
-const WS_RECONNECT_DELAY = 3000;
+let wsInitialized = false; // 重连按钮可见性判定
+// 指数退避：1s→30s 倍率 2 + 最多 1s 抖动；无 attempt 上限
+const WS_RECONNECT_MIN_DELAY = 1000;
+const WS_RECONNECT_MAX_DELAY = 30000;
+const WS_RECONNECT_FACTOR = 2;
 const LOG_REPLAY_STORAGE_KEY = 'logLastId';
 const LOG_SESSION_STORAGE_KEY = 'logSessionId';
 const LOG_MAX_ENTRIES = 500;
@@ -738,7 +757,7 @@ function sendWsRequest(action, data = {}, timeout = 30000) {
     return new Promise((resolve, reject) => {
         // 检查 WebSocket 连接
         if (!ws || ws.readyState !== WebSocket.OPEN) {
-            reject(new Error('WebSocket 未连接'));
+            reject(new Error(categorizeError({ message: 'WebSocket 未连接' })));
             return;
         }
 
@@ -756,7 +775,7 @@ function sendWsRequest(action, data = {}, timeout = 30000) {
         const timer = setTimeout(() => {
             if (wsRequestCallbacks[requestId]) {
                 delete wsRequestCallbacks[requestId];
-                reject(new Error(`请求超时 (${timeout}ms)`));
+                reject(new Error(categorizeError({ message: '请求超时' })));
             }
         }, timeout);
 
@@ -774,7 +793,7 @@ function sendWsRequest(action, data = {}, timeout = 30000) {
         } catch (e) {
             clearTimeout(timer);
             delete wsRequestCallbacks[requestId];
-            reject(new Error('发送请求失败: ' + e.message));
+            reject(new Error(categorizeError(e)));
         }
     });
 }
@@ -959,7 +978,8 @@ function ensureLogWindowEnhancements() {
         meta.innerHTML = [
             '<span class="log-meta-chip" id="log-meta-state"></span>',
             '<span class="log-meta-chip" id="log-meta-total"></span>',
-            '<span class="log-meta-chip" id="log-meta-unread"></span>'
+            '<span class="log-meta-chip" id="log-meta-unread"></span>',
+            '<button type="button" id="ws-retry-btn" class="btn btn-secondary btn-sm ws-retry-btn" onclick="retryWebSocketConnection()" style="display:none;" aria-label="手动重连 WebSocket">重连</button>'
         ].join('');
         toolbar.insertBefore(meta, toolbar.firstChild);
     }
@@ -1088,7 +1108,7 @@ function getConnectionStatusLabel() {
         case WS_STATE.CONNECTED:
             return '已连接';
         case WS_STATE.RECONNECTING:
-            return `重连中 ${wsConnectionState.attempt}/${WS_MAX_RECONNECT_ATTEMPTS}`;
+            return `重连中 #${wsConnectionState.attempt}`;
         case WS_STATE.DISCONNECTED:
             return '未连接';
         case WS_STATE.CONNECTING:
@@ -1106,11 +1126,17 @@ function updateLogMeta() {
     const totalElement = document.getElementById('log-meta-total');
     const unreadElement = document.getElementById('log-meta-unread');
     const headerUnreadElement = document.getElementById('log-header-unread');
+    const retryBtn = document.getElementById('ws-retry-btn');
     const unreadCount = getUnreadLogCount();
 
     if (stateElement) {
         stateElement.textContent = getConnectionStatusLabel();
         stateElement.className = `log-meta-chip connection-${wsConnectionState.state}`;
+    }
+    if (retryBtn) {
+        const s = wsConnectionState.state;
+        const showRetry = wsInitialized && (s === WS_STATE.DISCONNECTED || s === WS_STATE.RECONNECTING);
+        retryBtn.style.display = showRetry ? '' : 'none';
     }
 
     if (totalElement) {
@@ -1319,23 +1345,26 @@ function cleanupWsSocket(socket, shouldClose = false) {
     }
 }
 
-function scheduleWsReconnect() {
-    if (!wsReconnectEnabled || wsReconnectTimer || wsReconnectAttempts >= WS_MAX_RECONNECT_ATTEMPTS) {
+function scheduleWsReconnect(reason = '') {
+    if (!wsReconnectEnabled || wsReconnectTimer) {
         return;
     }
 
     wsReconnectAttempts += 1;
-    console.log(`尝试重连 (${wsReconnectAttempts}/${WS_MAX_RECONNECT_ATTEMPTS})...`);
+    const base = Math.min(WS_RECONNECT_MAX_DELAY,
+        WS_RECONNECT_MIN_DELAY * Math.pow(WS_RECONNECT_FACTOR, wsReconnectAttempts - 1));
+    const delay = Math.round(base + Math.random() * WS_RECONNECT_MIN_DELAY);
+    console.log(`尝试重连 #${wsReconnectAttempts}，${delay}ms 后重试...`);
     updateConnectionStatus(false, {
         state: WS_STATE.RECONNECTING,
         attempt: wsReconnectAttempts,
-        reason: ''
+        reason
     });
 
     wsReconnectTimer = setTimeout(() => {
         wsReconnectTimer = null;
         initWebSocket();
-    }, WS_RECONNECT_DELAY);
+    }, delay);
 }
 
 function initWebSocket() {
@@ -1344,6 +1373,7 @@ function initWebSocket() {
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const previousSocket = ws;
     const connectionId = ++wsActiveConnectionId;
+    wsInitialized = true;
 
     clearWsReconnectTimer();
     wsReconnectEnabled = true;
@@ -1459,14 +1489,9 @@ function initWebSocket() {
             console.log('WebSocket 连接关闭:', event.code, event.reason);
             rejectPendingWsRequests(`WebSocket 已断开 (${event.code || 'unknown'})`);
             
-            // 尝试重连
-            if (wsReconnectEnabled && wsReconnectAttempts < WS_MAX_RECONNECT_ATTEMPTS) {
-                updateConnectionStatus(false, {
-                    state: WS_STATE.RECONNECTING,
-                    attempt: wsReconnectAttempts + 1,
-                    reason: event.reason || ''
-                });
-                scheduleWsReconnect();
+            // 自动重连（指数退避，无限重试）
+            if (wsReconnectEnabled) {
+                scheduleWsReconnect(event.reason || `连接关闭 (${event.code || 'unknown'})`);
             } else {
                 updateConnectionStatus(false, {
                     state: WS_STATE.DISCONNECTED,
@@ -1504,6 +1529,13 @@ function closeWebSocket() {
         attempt: 0,
         reason: '连接已关闭'
     });
+}
+
+// 手动重连（log-meta 中"重连"按钮触发）
+function retryWebSocketConnection() {
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    wsReconnectAttempts = 0;
+    initWebSocket();
 }
 
 function getStoredLastLogId() {

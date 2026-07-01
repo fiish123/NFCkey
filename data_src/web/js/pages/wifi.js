@@ -528,24 +528,8 @@
         });
     }
 
-    // 设置按钮加载状态
-    function setButtonLoading(btn, isLoading) {
-        if (isLoading) {
-            btn.disabled = true;
-            btn.classList.add('btn-loading');
-            // 保存原始文本
-            if (!btn.dataset.originalText) {
-                btn.dataset.originalText = btn.innerHTML;
-            }
-        } else {
-            btn.disabled = false;
-            btn.classList.remove('btn-loading');
-            // 恢复原始文本
-            if (btn.dataset.originalText) {
-                btn.innerHTML = btn.dataset.originalText;
-            }
-        }
-    }
+    // 设置按钮加载状态：使用 common.js 提供的全局 setButtonLoading(element, bool)
+    // （切换锁定 .btn-loading 类 + disabled，统一加载态视觉）。
 
     // 获取信号强度描述
     function getSignalStrength(rssi) {

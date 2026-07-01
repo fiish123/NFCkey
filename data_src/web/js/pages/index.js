@@ -46,13 +46,13 @@
                     // 设置电压显示文本
                     batteryEl.textContent = voltage + ' V';
 
-                    // 根据状态设置颜色
+                    // 根据状态设置颜色（使用锁定色彩 token，避免硬编码 hex）
                     if (status === 'normal') {
-                        batteryEl.style.color = '#10b981'; // 绿色
+                        batteryEl.style.color = 'var(--color-success)';
                     } else if (status === 'low') {
-                        batteryEl.style.color = '#f59e0b'; // 黄色
+                        batteryEl.style.color = 'var(--color-warning)';
                     } else if (status === 'critical') {
-                        batteryEl.style.color = '#ef4444'; // 红色
+                        batteryEl.style.color = 'var(--color-danger)';
                     }
                 } else {
                     batteryEl.textContent = '获取失败';
@@ -66,25 +66,38 @@
 
     // 重启系统
     function restartSystem() {
+        const restartBtn = document.querySelector('button[onclick="restartSystem()"]');
         showConfirm('确定要重启系统吗？\n\n重启后将回到正常门禁模式，Web服务器将停止运行。', {
             type: 'danger',
             title: '确认重启'
         }).then(result => {
-            if (result) {
-                fetch('/api/system/actions/restart', { method: 'POST' })
-                    .then(response => {
-                        if (response.ok) {
-                            showToast('系统正在重启，请稍候...', 'info', { duration: 5000 });
-                        } else {
-                            showToast('重启失败，请重试', 'error');
-                        }
-                    })
-                    .catch(error => {
-                        showToast('请求失败：' + error, 'error');
-                    });
-            }
+            if (!result) return;
+            setButtonLoading(restartBtn, true);
+            fetch('/api/system/actions/restart', { method: 'POST' })
+                .then(response => {
+                    if (response.ok) {
+                        showToast('系统正在重启，请稍候...', 'info', { duration: 5000 });
+                    } else {
+                        showToast('重启失败，请重试', 'error');
+                    }
+                })
+                .catch(error => {
+                    showToast('请求失败：' + error, 'error');
+                })
+                .finally(() => {
+                    setButtonLoading(restartBtn, false);
+                });
         });
     }
+
+    // WebSocket 重连后自动刷新状态（去抖：2s 内的重复事件忽略）
+    let lastWsRefreshTs = 0;
+    document.addEventListener('ws-connected', function() {
+        const now = Date.now();
+        if (now - lastWsRefreshTs < 2000) return;
+        lastWsRefreshTs = now;
+        loadSystemInfo();
+    });
 
     // 暴露给全局
     window.restartSystem = restartSystem;

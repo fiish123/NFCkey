@@ -12,6 +12,15 @@
     function init() {
         loadSystemInfo();
         initFileUpload();
+
+        // WebSocket 重连后自动刷新系统信息（去抖：2s 内的重复事件忽略）
+        let lastWsRefreshTs = 0;
+        document.addEventListener('ws-connected', function() {
+            const now = Date.now();
+            if (now - lastWsRefreshTs < 2000) return;
+            lastWsRefreshTs = now;
+            loadSystemInfo();
+        });
     }
 
     function loadSystemInfo() {
@@ -97,7 +106,7 @@
         }
     }
 
-    function validateAndUpload(file) {
+    async function validateAndUpload(file) {
         if (updateRunning) {
             showToast('升级正在进行中，请稍候', 'warning');
             return;
@@ -111,6 +120,18 @@
 
         if (!window.fflate || typeof window.fflate.unzipSync !== 'function') {
             showToast('浏览器端压缩包解析模块未就绪', 'error');
+            resetSelectedUploadArea();
+            return;
+        }
+
+        // 升级前二次确认（防误操作导致设备变砖）。确认必须在任何进度副作用开始前解析。
+        const confirmed = await showConfirm('升级过程中设备将重启，期间请勿断电或关闭页面，否则可能导致设备变砖。确认开始升级？', {
+            type: 'danger',
+            title: '确认升级',
+            confirmText: '开始升级',
+            cancelText: '取消'
+        });
+        if (!confirmed) {
             resetSelectedUploadArea();
             return;
         }

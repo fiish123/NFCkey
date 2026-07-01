@@ -275,6 +275,56 @@ TaskHandle_t playerListHandle = NULL;
 unsigned char playlist[20] = {};
 volatile unsigned int playlistcount = 0, playlistindex = 0;
 volatile bool isplaying = false;
+
+// 舵机动作（Web 调用时通过队列异步执行，避免阻塞 Web 线程）
+volatile bool isservobusy = false;
+
+StaticSemaphore_t xMutexBuffer;
+SemaphoreHandle_t servolock;
+
+QueueHandle_t servoQueue = nullptr;
+static TaskHandle_t servoTaskHandle = NULL;
+
+// 获取/释放舵机占用
+static bool tryAcquireServo()
+{
+  if (xSemaphoreTake(servolock, 0) == pdTRUE)
+  {
+    isservobusy = true;
+    return true;
+  }
+  return false;
+}
+static bool releaseServo()
+{
+  if (xSemaphoreGive(servolock) == pdTRUE)
+  {
+    isservobusy = false;
+    return true;
+  }
+  return false; // 不是持有者，拒接释放
+}
+
+// 前置声明：sendServoPosition 定义在文件后部
+void sendServoPosition(unsigned int in);
+
+// 舵机任务：取出目标位置并执行（带 1s 延时），跑在独立任务上避免阻塞 Web 线程
+void servoTask(void *parameter)
+{
+  while (1)
+  {
+    uint16_t target;
+    xQueueReceive(servoQueue, &target, portMAX_DELAY);
+
+    sendServoPosition(target);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    powermanager(2, false);
+    releaseServo();
+    LOG_I("API调用: 舵机移动至位置 %d", target);
+  }
+}
+
 void playerList(void *parameter)
 {
   while (1)
@@ -282,7 +332,7 @@ void playerList(void *parameter)
 
     while (playlistcount - playlistindex > 0)
     {
-      //isplaying = true;
+      // isplaying = true;
       playAudio(playlist[playlistindex]);
       playlistindex++;
     }
@@ -414,12 +464,10 @@ void sendServoPosition(unsigned int in)
   switchconnect(1);
 }
 
-// 舵机动作
-bool isservobusy = false;
-
 void Switchlock()
 {
-  isservobusy = true;
+  if (!tryAcquireServo())
+    return;
 
   // UNLOCKING
   sendServoPosition(unlockPosition);
@@ -434,55 +482,29 @@ void Switchlock()
 
   powermanager(2, false);
 
-  isservobusy = false;
+  releaseServo();
 }
 
-// 执行解锁动作（供Web调用）
-void executeUnlock()
+// 投递一次舵机移动到队列（非阻塞）。供 Web 调用，真正动作在 servoTask 执行。
+bool executePosition(uint16_t position)
 {
-  isservobusy = true;
+  if (!tryAcquireServo())
+    return false;
 
-  sendServoPosition(unlockPosition);
-  vTaskDelay(pdMS_TO_TICKS(1000));
-
-  isservobusy = false;
-
-  powermanager(2, false);
-
-  LOG_I("API调用: 舵机解锁");
+  uint16_t target = position;
+  if (xQueueSend(servoQueue, &target, 0) != pdPASS)
+  {
+    releaseServo();
+    return false;
+  }
+  return true;
 }
 
-// 执行锁定动作（供Web调用）
-void executeLock()
-{
-  isservobusy = true;
+// 解锁/锁定：以保存的配置位置执行移动
+bool executeUnlock() { return executePosition(unlockPosition); }
+bool executeLock() { return executePosition(lockPosition); }
 
-  sendServoPosition(lockPosition);
-  vTaskDelay(pdMS_TO_TICKS(1000));
-
-  isservobusy = false;
-
-  powermanager(2, false);
-
-  LOG_I("API调用: 舵机锁定");
-}
-
-// 执行任意动作
-void executePosition(uint16_t position)
-{
-  isservobusy = true;
-
-  sendServoPosition(position);
-  vTaskDelay(pdMS_TO_TICKS(1000));
-
-  isservobusy = false;
-
-  powermanager(2, false);
-
-  LOG_I("API调用: 舵机移动至位置 %d", position);
-}
-
-bool webdebug = false;
+bool webdebug = true;
 
 // ======================================================================
 //  Initialization (setup)
@@ -521,6 +543,8 @@ void setup()
 
   // 加载舵机配置
   loadServoConfig();
+  servolock = xSemaphoreCreateBinaryStatic(&xMutexBuffer);
+  xSemaphoreGive(servolock);
 
   // 舵机复位
   sendServoPosition(lockPosition);
@@ -537,6 +561,15 @@ void setup()
   {
     LOG_W("授权卡片不可用，启动Web管理服务用于配置");
     initWebServer();
+    xTaskCreatePinnedToCore(
+        servoTask,        // 任务函数
+        "servo",          // 任务名称
+        3072,             // 堆栈大小（字节）
+        NULL,             // 参数
+        2,                // 优先级
+        &servoTaskHandle, // 任务句柄
+        0                 // 核心编号
+    );
     webServerStartTime = millis();
   }
 
@@ -558,6 +591,8 @@ void setup()
       &playerListHandle, // 任务句柄
       0                  // 核心编号
   );
+
+  servoQueue = xQueueCreate(1, sizeof(uint16_t));
 
   vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -648,7 +683,7 @@ void loop()
         LOG_I("卡片验证通过，执行解锁动作");
 
         // 舵机动作
-        if (!isservobusy)
+        if (tryAcquireServo())
         {
 
           if (consecutiveCardCount < 1)
@@ -684,11 +719,6 @@ void loop()
       vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // 等待舵机完成动作
-    while (isservobusy)
-    {
-      vTaskDelay(pdMS_TO_TICKS(100));
-    }
 
     uint32_t lasttime = millis();
     while (lasttime - millis() < 500 and digitalRead(IRQ) == LOW)
@@ -707,6 +737,15 @@ void loop()
       if (!isWebServerRunning())
         LOG_I("检测到连续刷卡");
       initWebServer();
+      xTaskCreatePinnedToCore(
+          servoTask,        // 任务函数
+          "servo",          // 任务名称
+          3072,             // 堆栈大小（字节）
+          NULL,             // 参数
+          2,                // 优先级
+          &servoTaskHandle, // 任务句柄
+          0                 // 核心编号
+      );
       consecutiveCardCount = 0;
       vTaskDelay(pdMS_TO_TICKS(10000));
       break;

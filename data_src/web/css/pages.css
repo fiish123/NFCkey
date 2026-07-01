@@ -1,2048 +1,451 @@
-/* ==================== 首页样式 ==================== */
-#page-index .container {
-    max-width: 640px;
-    padding: var(--spacing-2xl) var(--spacing-xl);
-    border-radius: var(--radius-xl);
-}
+/* ============================================================
+   doorkey admin UI — page-level stylesheet (pages.css)
+   Phase 4 minimalist rewrite.
+   Page-scoped layout on #page-* body-ID hooks, reusing the
+   locked style.css design tokens. Flat Slate-50 surfaces, white
+   cards w/ 1px Slate-200 hairline + one soft shadow; one accent
+   (#0891B2 fill / #0E7490 hover+text); semantic color ONLY for
+   state. No gradient fills, no blur backdrops, no glow shadows,
+   no shine sweeps; motion reuses style.css's seven keyframes only.
+   Class + state-class names preserved verbatim per JS contract.
+   ============================================================ */
 
-#page-index h1 {
-    font-size: 36px;
-    text-shadow: 0 2px 12px rgba(8, 145, 178, 0.2);
-    letter-spacing: -0.03em;
-}
-
+/* ============================================================
+   #page-index — home
+   Uniform neutral ghost nav tiles; status strip inherits style.css.
+   ============================================================ */
 #page-index .btn-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: var(--spacing-md);
-    max-width: 560px;
-    margin: var(--spacing-xl) auto;
+    gap: var(--spacing-sm);
+    margin: var(--spacing-lg) 0 var(--spacing-md);
 }
 
 #page-index .btn-grid .btn {
-    width: 100%;
-    min-height: 56px;
-    font-size: 16px;
+    justify-content: flex-start;
+    text-align: left;
+    min-height: 52px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 15px;
 }
 
-@media (max-width: 640px) {
-    #page-index .btn-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-/* ==================== WiFi配置页面样式 ==================== */
-
-/* WiFi状态和扫描区域 */
-#page-wifi .wifi-status-section {
-    margin: var(--spacing-lg) 0;
-    padding: var(--spacing-lg);
-}
-
-#page-wifi .wifi-scan-btn {
-    margin-top: var(--spacing-lg);
-}
-
-#page-wifi .wifi-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    margin-top: var(--spacing-lg);
-}
-
-#page-wifi .wifi-empty-text {
-    text-align: center;
+/* De-rainbow: every nav tile is a neutral ghost, including the
+   legacy .btn-primary / .btn-danger tiles. Color is reserved for
+   real state, not for "which tile". */
+#page-index .btn-grid .btn,
+#page-index .btn-grid .btn.btn-primary,
+#page-index .btn-grid .btn.btn-danger {
+    background: var(--color-bg-card);
+    border-color: var(--color-border);
     color: var(--color-text-secondary);
 }
-
-/* WiFi配置表单区域 */
-#page-wifi .wifi-config-section {
-    margin: var(--spacing-xl) 0;
-}
-
-#page-wifi .wifi-config-section h3 {
-    font-size: 18px;
-    font-weight: 600;
+#page-index .btn-grid .btn:hover {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border-hover);
     color: var(--color-text);
-    margin-bottom: var(--spacing-md);
 }
 
-#page-wifi .wifi-actions-row {
-    display: flex;
-    gap: var(--spacing-md);
-    margin-top: var(--spacing-md);
-}
+/* ============================================================
+   #page-wifi
+   ============================================================ */
 
-#page-wifi .wifi-actions-row .btn {
-    flex: 1;
+/* status + scan section */
+#page-wifi .wifi-status-section { margin: var(--spacing-lg) 0; padding: var(--spacing-lg); text-align: left; }
+#page-wifi .status-indicator {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+    font-size: 14px; color: var(--color-text-secondary);
 }
+#page-wifi .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--color-text-light); flex-shrink: 0;
+}
+#page-wifi .status-dot.connected { background: var(--color-success); }
+#page-wifi .status-dot.connecting { background: var(--color-warning); }
+#page-wifi .wifi-scan-btn { width: 100%; margin-top: var(--spacing-md); }
 
-/* 危险操作区域 */
-#page-wifi .wifi-danger-section {
-    margin-top: var(--spacing-xl);
-}
-
-#page-wifi .wifi-clear-btn {
-    width: 100%;
-}
-
-/* 返回链接 */
-#page-wifi .wifi-back-link {
-    width: 100%;
-    justify-content: center;
-    text-decoration: none;
-    margin-top: var(--spacing-md);
-}
-
-@media (max-width: 480px) {
-    #page-wifi .wifi-actions-row {
-        flex-direction: column;
-    }
-}
+/* scan result list */
+#page-wifi .wifi-list { display: flex; flex-direction: column; gap: var(--spacing-xs); margin: var(--spacing-md) 0; text-align: left; }
+#page-wifi .wifi-empty-text { text-align: center; color: var(--color-text-muted); padding: var(--spacing-md) 0; font-size: 14px; }
 
 #page-wifi .wifi-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--spacing-md);
+    display: flex; align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
     background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: all 0.2s;
-    min-height: 72px;
-    border: 1px solid var(--color-border);
-    animation: wifiItemFadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    transition: var(--transition-fast);
+    min-height: 56px;
 }
+#page-wifi .wifi-item:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); }
+#page-wifi .wifi-item.selected { background: var(--color-primary-light); border-color: var(--color-primary); }
+#page-wifi .wifi-item.selected .wifi-name,
+#page-wifi .wifi-item.selected .wifi-icon { color: var(--color-primary-hover); }
 
-#page-wifi :where(.wifi-name) {
-    font-weight: 500;
-    transition: color 0.2s;
+#page-wifi .wifi-info { display: flex; align-items: center; gap: var(--spacing-sm); width: 100%; }
+#page-wifi .wifi-icon { width: 20px; height: 20px; color: var(--color-text-muted); flex-shrink: 0; }
+#page-wifi .wifi-name { font-size: 14px; font-weight: 600; color: var(--color-text); }
+#page-wifi .wifi-strength { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
+#page-wifi .wifi-encryption { font-size: 12px; color: var(--color-text-muted); margin-left: var(--spacing-xs); }
+
+#page-wifi .connected-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; margin-left: var(--spacing-xs);
+    background: rgba(22, 163, 74, 0.10);
+    color: #15803D;
+    border-radius: var(--radius-full);
+    font-size: 11px; font-weight: 600;
 }
+#page-wifi .connected-badge svg { width: 10px; height: 10px; }
+#page-wifi .connected-badge .status-dot { width: 6px; height: 6px; background: var(--color-success); }
 
-#page-wifi .wifi-item:hover .wifi-name {
-    color: var(--color-primary);
-}
+/* signal strength bars — semantic color by level (green/amber/red) */
+#page-wifi .signal-icon { display: flex; align-items: flex-end; gap: 2px; width: 16px; height: 14px; flex-shrink: 0; }
+#page-wifi .signal-bar { width: 3px; background: var(--color-border); border-radius: 1px; transition: var(--transition-fast); }
+#page-wifi .signal-bar:nth-child(1) { height: 4px; }
+#page-wifi .signal-bar:nth-child(2) { height: 7px; }
+#page-wifi .signal-bar:nth-child(3) { height: 10px; }
+#page-wifi .signal-bar:nth-child(4) { height: 13px; }
+#page-wifi .signal-4 .signal-bar,
+#page-wifi .signal-3 .signal-bar:nth-child(-n+3) { background: var(--color-success); }
+#page-wifi .signal-2 .signal-bar:nth-child(-n+2) { background: var(--color-warning); }
+#page-wifi .signal-1 .signal-bar:nth-child(1) { background: var(--color-danger); }
 
-#page-wifi .wifi-item.selected {
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.5) 0%, rgba(255, 255, 255, 0.5) 100%);
-    border: 3px solid var(--color-primary);
-    box-shadow: var(--shadow-md), 0 0 0 4px rgba(8, 145, 178, 0.1);
-    transform: translateX(4px);
-}
+#page-wifi .encryption-icon { display: flex; align-items: center; color: var(--color-text-muted); flex-shrink: 0; }
+#page-wifi .encryption-icon svg { width: 14px; height: 14px; }
 
-#page-wifi .wifi-item.selected:hover {
-    transform: translateX(6px);
-}
+/* config form */
+#page-wifi .wifi-config-section { margin: var(--spacing-lg) 0; text-align: left; }
+#page-wifi .wifi-config-section h3 { margin-bottom: var(--spacing-md); }
 
-#page-wifi .wifi-item.selected .wifi-name {
-    color: var(--color-primary);
-    font-weight: 600;
-}
-
-#page-wifi .wifi-item.selected .wifi-icon {
-    color: var(--color-primary);
-}
-
-#page-wifi .wifi-info {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-}
-
-#page-wifi :where(.wifi-icon) {
-    width: 24px;
-    height: 24px;
-    color: var(--color-text-muted);
-    transition: color 0.2s;
-}
-
-#page-wifi .wifi-item:hover .wifi-icon {
-    color: var(--color-primary);
-}
-
-#page-wifi .wifi-strength {
-    font-size: 12px;
-    color: var(--color-text-secondary);
-}
-
-#page-wifi .wifi-encryption {
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    margin-left: var(--spacing-sm);
-}
-
-#page-wifi .wifi-password {
-    padding: var(--spacing-sm);
-    background: var(--color-bg-card);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    font-size: 14px;
-    width: 100%;
-    box-sizing: border-box;
-    padding-right: 48px;
-    transition: var(--transition-base);
-}
-
-#page-wifi .wifi-password:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light), var(--shadow-sm);
-    transform: scale(1.01);
-}
-
+#page-wifi .password-wrapper { position: relative; display: flex; align-items: center; }
+#page-wifi .wifi-password { padding-right: 44px; }   /* room for the eye toggle */
 #page-wifi .wifi-password.input-error {
     border-color: var(--color-danger);
-    animation: shake 0.4s ease-in-out;
+    box-shadow: 0 0 0 3px var(--color-danger-light);
+    animation: shake 0.4s ease-in-out;   /* keyframe lives in style.css */
 }
-
-#page-wifi .password-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-}
-
 #page-wifi .password-toggle {
-    position: absolute;
-    right: 8px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 36px; height: 36px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
     border-radius: var(--radius-sm);
-    transition: var(--transition-base);
-    color: var(--color-text-muted);
-}
-
-#page-wifi .password-toggle:hover {
-    color: var(--color-primary);
-    background: var(--color-bg-hover);
-}
-
-#page-wifi .password-toggle:active {
-    transform: scale(0.9);
-}
-
-#page-wifi .password-toggle:focus-visible {
-    outline: 2px solid var(--color-primary-light);
-    outline-offset: 2px;
-}
-
-#page-wifi .password-toggle svg {
-    width: 20px;
-    height: 20px;
-    transition: var(--transition-base);
-}
-
-#page-wifi .password-toggle:hover svg {
-    transform: scale(1.1);
-}
-
-#page-wifi .status-indicator {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-md);
-    background: var(--color-bg-card);
-    border-radius: var(--radius-md);
-}
-
-#page-wifi .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--color-text-secondary);
-}
-
-#page-wifi .status-dot.connected {
-    background: var(--color-success);
-}
-
-#page-wifi .status-dot.connecting {
-    background: var(--color-warning);
-    animation: wifiPulse 1s infinite;
-}
-
-@keyframes wifiPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
-#page-wifi .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-#page-wifi .btn-loading {
-    position: relative;
-    pointer-events: none;
-}
-
-#page-wifi .btn-loading::after {
-    content: '';
-    position: absolute;
-    width: 20px;
-    height: 20px;
-    top: 50%;
-    left: 50%;
-    margin-left: -10px;
-    margin-top: -10px;
-    border: 2px solid transparent;
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-}
-
-@keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-4px); }
-    75% { transform: translateX(4px); }
-}
-
-#page-wifi .error-hint {
-    color: var(--color-danger);
-    font-size: 12px;
-    margin-top: var(--spacing-xs);
-    display: none;
-}
-
-#page-wifi .error-hint.visible {
-    display: block;
-}
-
-/* ==================== 文件管理页面样式 ==================== */
-
-/* 通用按钮样式 */
-#page-files :where(.btn) {
-    padding: 10px 20px;
-    font-size: 14px;
-    font-weight: 500;
-    min-height: 40px;
-    white-space: nowrap;
-}
-
-#page-files .btn:hover {
-    transform: translateY(-2px);
-}
-
-/* 文件列表项动画 */
-#page-files .item {
-    opacity: 0;
-    transform: translateY(20px);
-    animation: fadeInUp 0.4s ease-out forwards;
-}
-
-@keyframes fadeInUp {
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* ==================== 上传区域样式改进 ==================== */
-#page-files .upload-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
-}
-
-#page-files .upload-area {
-    position: relative;
-    border: 2px dashed var(--color-border);
-    padding: var(--spacing-xl) var(--spacing-lg);
-    border-radius: var(--radius-lg);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.6) 0%, rgba(255, 255, 255, 0.8) 100%);
-    backdrop-filter: blur(8px);
-    transition: var(--transition-base);
-    cursor: pointer;
-    text-align: center;
-    min-height: 180px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-}
-
-#page-files .upload-area::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at center, rgba(8, 145, 178, 0.03) 0%, transparent 70%);
-    pointer-events: none;
-}
-
-#page-files .upload-area:hover {
-    border-color: var(--color-primary);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.85) 0%, rgba(255, 255, 255, 0.95) 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md), 0 0 0 4px rgba(8, 145, 178, 0.08);
-}
-
-#page-files .upload-area:focus-visible {
-    outline: 3px solid var(--color-primary-light);
-    outline-offset: 2px;
-    border-color: var(--color-primary);
-}
-
-#page-files .upload-area.drag-over {
-    border-color: var(--color-success);
-    border-style: solid;
-    background: linear-gradient(135deg, rgba(220, 252, 231, 0.9) 0%, rgba(255, 255, 255, 0.95) 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md), 0 0 0 4px rgba(34, 197, 94, 0.1);
-}
-
-#page-files .upload-area.drag-over::after {
-    content: '释放以上传';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: var(--color-success);
-    font-weight: 700;
-    font-size: 18px;
-    pointer-events: none;
-    z-index: 2;
-}
-
-#page-files .upload-area.has-file {
-    border-style: solid;
-    border-color: var(--color-primary);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
-}
-
-/* 上传内容 */
-#page-files .upload-content {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-md);
-    transition: var(--transition-base);
-}
-
-#page-files .upload-icon {
-    width: 64px;
-    height: 64px;
-    color: var(--color-primary);
-    transition: var(--transition-base);
-    filter: drop-shadow(0 4px 8px rgba(8, 145, 178, 0.2));
-}
-
-#page-files .upload-area:hover .upload-icon {
-    transform: scale(1.1);
-    filter: drop-shadow(0 6px 12px rgba(8, 145, 178, 0.3));
-}
-
-#page-files .upload-area.has-file .upload-icon {
-    display: none;
-}
-
-#page-files .upload-text {
-    font-size: 15px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    transition: var(--transition-base);
-}
-
-#page-files .upload-area:hover .upload-text {
-    color: var(--color-primary);
-}
-
-#page-files .upload-area.has-file .upload-text {
-    display: none;
-}
-
-/* 文件信息显示 */
-#page-files .file-info {
-    display: none !important;
-    position: relative;
-    z-index: 1;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-md);
-    animation: fileInfoSlideIn 0.3s ease-out;
-}
-
-#page-files .upload-area.has-file .file-info {
-    display: flex !important;
-}
-
-@keyframes fileInfoSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-#page-files .file-info-icon {
-    width: 56px;
-    height: 56px;
-    color: var(--color-primary);
-    background: linear-gradient(135deg, rgba(8, 145, 178, 0.1) 0%, rgba(8, 145, 178, 0.05) 100%);
-    padding: var(--spacing-md);
-    border-radius: var(--radius-lg);
-    border: 2px solid rgba(8, 145, 178, 0.15);
-    transition: var(--transition-base);
-}
-
-#page-files .file-info-icon:hover {
-    transform: scale(1.05);
-    background: linear-gradient(135deg, rgba(8, 145, 178, 0.15) 0%, rgba(8, 145, 178, 0.08) 100%);
-}
-
-#page-files .file-info-details {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xs);
-    text-align: center;
-    max-width: 100%;
-}
-
-#page-files .file-name {
-    font-family: var(--font-heading);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--color-primary);
-    word-break: break-all;
-    padding: var(--spacing-sm) var(--spacing-md);
-    background: var(--color-primary-light);
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(8, 145, 178, 0.1);
-}
-
-#page-files .file-size {
-    font-size: 13px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    background: rgba(248, 250, 252, 0.8);
-    padding: 4px 12px;
-    border-radius: var(--radius-full);
-}
-
-/* 上传进度容器 */
-#page-files .upload-progress-wrapper {
-    display: none;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    animation: progressSlideIn 0.3s ease-out;
-}
-
-#page-files .upload-progress-wrapper.active {
-    display: flex;
-}
-
-@keyframes progressSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-#page-files .upload-progress-container {
-    position: relative;
-    width: 100%;
-    height: 28px;
-    background: #E2E8F0;
-    border-radius: var(--radius-full);
-    overflow: hidden;
-    box-shadow: var(--shadow-inner);
-}
-
-#page-files .upload-progress-bar {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-primary-hover) 50%, var(--color-primary) 100%);
-    background-size: 200% 100%;
-    border-radius: var(--radius-full);
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-}
-
-#page-files .upload-progress-bar::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    animation: shimmer 2s infinite;
-}
-
-#page-files .upload-status-text {
-    font-size: 13px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    text-align: right;
-    padding-right: var(--spacing-xs);
-    font-family: var(--font-heading);
-}
-
-/* ==================== 路径浏览器样式改进 ==================== */
-#page-files .path-browser {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
-    padding: var(--spacing-lg);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.9) 0%, rgba(255, 255, 255, 0.95) 100%);
-    backdrop-filter: blur(16px);
-    border-radius: var(--radius-lg);
-    border: 2px solid var(--color-border);
-    box-shadow: var(--shadow-md);
-    position: relative;
-    overflow: hidden;
-}
-
-#page-files .path-browser::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
-}
-
-/* 导航控件区域 */
-#page-files .path-nav-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--spacing-md);
-    align-items: center;
-}
-
-#page-files .nav-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    min-height: 40px;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: var(--transition-base);
-    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
-    color: white;
-    box-shadow: var(--shadow-sm);
-    position: relative;
-    overflow: hidden;
-}
-
-#page-files .nav-btn::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: transform 0.4s ease;
-}
-
-#page-files .nav-btn:hover::before {
-    transform: translateX(100%);
-}
-
-#page-files .nav-btn:hover {
-    background: linear-gradient(135deg, var(--color-primary-hover) 0%, #155E75 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
-
-#page-files .nav-btn:active {
-    transform: translateY(0);
-}
-
-#page-files .nav-btn:focus-visible {
-    outline: 3px solid var(--color-primary-light);
-    outline-offset: 2px;
-}
-
-#page-files .nav-btn:disabled {
-    background: linear-gradient(135deg, #CBD5E1 0%, #94A3B8 100%);
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: var(--shadow-sm);
-}
-
-#page-files .nav-btn:disabled::before {
-    display: none;
-}
-
-#page-files .nav-btn svg {
-    width: 14px;
-    height: 14px;
-    transition: var(--transition-base);
-}
-
-#page-files .nav-btn:hover svg {
-    transform: scale(1.1);
-}
-
-/* 路径显示包装器 */
-#page-files .path-display-wrapper {
-    flex: 1;
-    min-width: 200px;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.9);
-    border: 2px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-inner);
-}
-
-#page-files .path-display-wrapper:hover {
-    border-color: var(--color-border-hover);
-    box-shadow: var(--shadow-sm);
-}
-
-#page-files .path-folder-icon {
-    width: 20px;
-    height: 20px;
-    color: var(--color-primary);
-    flex-shrink: 0;
-    transition: var(--transition-base);
-}
-
-#page-files .path-display-wrapper:hover .path-folder-icon {
-    transform: scale(1.1);
-}
-
-#page-files .path-display {
-    flex: 1;
-    border: none;
-    background: transparent;
-    color: var(--color-text-secondary);
-    font-family: var(--font-heading);
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    outline: none;
-    width: 100%;
-    min-width: 0;
-    cursor: default;
-}
-
-#page-files .path-display::placeholder {
-    color: var(--color-text-light);
-}
-
-/* 操作按钮区域 */
-#page-files .path-actions {
-    display: flex;
-    gap: var(--spacing-sm);
-    flex-wrap: wrap;
-    justify-content: flex-start;
-}
-
-#page-files .action-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    min-height: 40px;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-sm);
-    position: relative;
-    overflow: hidden;
-}
-
-#page-files .action-btn::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: transform 0.4s ease;
-}
-
-#page-files .action-btn:hover::before {
-    transform: translateX(100%);
-}
-
-#page-files .action-btn svg {
-    width: 14px;
-    height: 14px;
-    transition: var(--transition-base);
-}
-
-#page-files .action-btn:hover svg {
-    transform: scale(1.1);
-}
-
-#page-files .action-btn-create {
-    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
-    color: white;
-}
-
-#page-files .action-btn-create:hover {
-    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md), 0 0 15px rgba(59, 130, 246, 0.3);
-}
-
-#page-files .action-btn:active {
-    transform: translateY(0);
-}
-
-#page-files .action-btn:focus-visible {
-    outline: 3px solid rgba(59, 130, 246, 0.2);
-    outline-offset: 2px;
-}
-
-/* ==================== 响应式调整 ==================== */
-@media (max-width: 768px) {
-    #page-files .path-browser {
-        padding: var(--spacing-md);
-    }
-
-    #page-files .path-nav-controls {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    #page-files .path-display-wrapper {
-        width: 100%;
-    }
-
-    #page-files .nav-btn {
-        width: 100%;
-        justify-content: center;
-    }
-
-    #page-files .path-actions {
-        width: 100%;
-    }
-
-    #page-files .action-btn {
-        flex: 1;
-        justify-content: center;
-        min-width: 0;
-    }
-
-    #page-files .upload-area {
-        padding: var(--spacing-lg) var(--spacing-md);
-        min-height: 160px;
-    }
-
-    #page-files .upload-icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    #page-files .file-info-icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    #page-files .file-name {
-        font-size: 13px;
-    }
-}
-
-@media (max-width: 480px) {
-    #page-files .upload-area {
-        padding: var(--spacing-md);
-        min-height: 140px;
-    }
-
-    #page-files .upload-icon {
-        width: 40px;
-        height: 40px;
-    }
-
-    #page-files .upload-text {
-        font-size: 13px;
-    }
-
-    #page-files .file-info-icon {
-        width: 40px;
-        height: 40px;
-        padding: var(--spacing-sm);
-    }
-
-    #page-files .file-name {
-        font-size: 12px;
-        padding: var(--spacing-xs) var(--spacing-sm);
-    }
-
-    #page-files .file-size {
-        font-size: 12px;
-    }
-
-    #page-files .nav-btn,
-    #page-files .action-btn {
-        padding: 8px 12px;
-        font-size: 12px;
-        min-height: 36px;
-    }
-
-    #page-files .nav-btn svg,
-    #page-files .action-btn svg {
-        width: 12px;
-        height: 12px;
-    }
-
-    #page-files .path-browser {
-        gap: var(--spacing-sm);
-    }
-
-    #page-files .path-actions {
-        flex-direction: column;
-    }
-
-    #page-files .action-btn {
-        width: 100%;
-    }
-}
-
-/* ==================== 舵机管理页面样式 ==================== */
-#page-servo .btn-group.horizontal {
-    flex-direction: row;
-}
-
-/* 舵机位置控制 */
-#page-servo .servo-position-control {
-    margin-bottom: var(--spacing-lg);
-}
-
-#page-servo .position-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--spacing-sm);
-}
-
-#page-servo .position-header label {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--color-text);
-}
-
-#page-servo .position-percent {
-    font-family: var(--font-heading);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--color-primary);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.8) 0%, rgba(255, 255, 255, 0.8) 100%);
-    padding: 4px 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-light);
-}
-
-#page-servo .position-control-row {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-}
-
-/* 滑动条样式 */
-#page-servo .slider {
-    flex: 1;
-    -webkit-appearance: none;
-    appearance: none;
-    height: 8px;
-    border-radius: var(--radius-full);
-    background: linear-gradient(90deg, var(--color-border-light) 0%, var(--color-border-light) 100%);
-    outline: none;
-    cursor: pointer;
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-inner);
-}
-
-#page-servo .slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
-    transition: var(--transition-base);
-    border: 2px solid white;
-}
-
-#page-servo .slider::-webkit-slider-thumb:hover {
-    transform: scale(1.15);
-    box-shadow: 0 4px 12px rgba(8, 145, 178, 0.4);
-}
-
-#page-servo .slider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
-    transition: var(--transition-base);
-    border: 2px solid white;
-}
-
-#page-servo .slider::-moz-range-thumb:hover {
-    transform: scale(1.15);
-    box-shadow: 0 4px 12px rgba(8, 145, 178, 0.4);
-}
-
-#page-servo .slider:focus {
-    box-shadow: 0 0 0 3px var(--color-primary-light), var(--shadow-inner);
-}
-
-#page-servo .slider:active::-webkit-slider-thumb {
-    transform: scale(1.1);
-    box-shadow: 0 4px 16px rgba(8, 145, 178, 0.5);
-}
-
-#page-servo .slider:active::-moz-range-thumb {
-    transform: scale(1.1);
-    box-shadow: 0 4px 16px rgba(8, 145, 178, 0.5);
-}
-
-/* 位置输入框样式 */
-#page-servo .position-input {
-    width: 90px;
-    padding: 10px 12px;
-    border: 2px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-card);
-    color: var(--color-text);
-    font-family: var(--font-heading);
-    font-size: 15px;
-    font-weight: 600;
-    text-align: center;
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-inner);
-}
-
-#page-servo .position-input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light), var(--shadow-sm);
-}
-
-#page-servo .position-input:hover {
-    border-color: var(--color-border-hover);
-}
-
-@media (max-width: 768px) {
-    #page-servo .btn-group.horizontal {
-        flex-direction: column;
-    }
-    
-    #page-servo .position-control-row {
-        flex-wrap: wrap;
-    }
-    
-    #page-servo .slider {
-        order: 1;
-        width: 100%;
-    }
-    
-    #page-servo .position-input {
-        order: 2;
-        width: 100%;
-    }
-}
-
-/* ==================== OTA升级页面样式 ==================== */
-#page-ota .upload-box {
-    max-width: 500px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-#page-ota .system-info {
-    max-width: 500px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-#page-ota .section {
-    max-width: 500px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-/* OTA 系统信息/升级包摘要 - 键值对网格，复用首页 info-row 视觉语言 */
-#page-ota .system-info-grid {
-    display: flex;
-    flex-direction: column;
-}
-
-#page-ota .info-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--spacing-md);
-    padding: var(--spacing-sm) 0;
-    font-size: 14px;
-    color: var(--color-text-muted);
-}
-
-#page-ota .info-item:not(:last-child) {
-    border-bottom: 1px solid var(--color-border-light);
-}
-
-#page-ota .info-item strong {
-    color: var(--color-text);
-    font-weight: 600;
-}
-
-#page-ota .info-item span {
-    font-family: var(--font-heading);
-    color: var(--color-text-secondary);
-    text-align: right;
-    word-break: break-all;
-}
-
-/* OTA 注意事项列表 - 去除默认圆点，使用主题色圆点标记 */
-#page-ota .note-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-}
-
-#page-ota .note-list li {
-    position: relative;
-    padding-left: var(--spacing-lg);
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--color-text-muted);
-}
-
-#page-ota .note-list li::before {
-    content: '';
-    position: absolute;
-    left: var(--spacing-xs);
-    top: 9px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-primary);
-    opacity: 0.7;
-}
-
-/* ==================== 连接测试进度指示器 ==================== */
+    color: var(--color-text-muted); cursor: pointer;
+    transition: var(--transition-fast);
+}
+#page-wifi .password-toggle:hover { color: var(--color-text); background: var(--color-bg-hover); }
+#page-wifi .password-toggle:focus-visible { outline: 2px solid var(--color-primary-light); outline-offset: 1px; }
+#page-wifi .password-toggle svg { width: 18px; height: 18px; }
+
+#page-wifi .error-hint { margin-top: var(--spacing-xs); color: var(--color-danger-hover); font-size: 12px; display: none; }
+#page-wifi .error-hint.visible { display: block; }
+
+#page-wifi .wifi-actions-row { display: flex; gap: var(--spacing-sm); margin-top: var(--spacing-md); }
+#page-wifi .wifi-actions-row .btn { flex: 1; }
+
+#page-wifi .wifi-danger-section { margin-top: var(--spacing-xl); }
+#page-wifi .wifi-clear-btn { width: 100%; }
+#page-wifi .wifi-back-link { width: 100%; justify-content: center; margin-top: var(--spacing-md); }
+
+/* scan in-progress — quiet spinner reusing the `spin` keyframe
+   (replaces the old radarPulse rings) */
+#page-wifi .scan-progress { text-align: center; padding: var(--spacing-lg) var(--spacing-md); color: var(--color-text-muted); }
+#page-wifi .scan-progress p { margin: var(--spacing-sm) 0 0; font-size: 14px; }
+#page-wifi .radar-animation { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0 auto var(--spacing-sm); }
+#page-wifi .radar-animation svg { width: 32px; height: 32px; color: var(--color-primary-hover); animation: spin 1.2s linear infinite; }
+
+/* connection-test progress UI (defensive — rendered only if JS builds it).
+   No new keyframes: the ring is static, steps convey state via color. */
 #page-wifi .connection-progress {
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%);
-    backdrop-filter: blur(12px);
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-xl);
-    margin-top: var(--spacing-lg);
-    border: 2px solid var(--color-border);
-    box-shadow: var(--shadow-md);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-lg);
-}
-
-#page-wifi .progress-ring {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#page-wifi .progress-ring-svg {
-    transform: rotate(-90deg);
-}
-
-#page-wifi .progress-ring-bg {
-    stroke-dasharray: 163.36;
-    stroke-dashoffset: 0;
-}
-
-#page-wifi .progress-ring-circle {
-    stroke-dasharray: 163.36;
-    stroke-dashoffset: 163.36;
-    transition: stroke-dashoffset 0.3s ease;
-    transform-origin: 50% 50%;
-}
-
-#page-wifi .progress-ring-circle.animating {
-    animation: progressRing 2s ease-in-out infinite;
-}
-
-@keyframes progressRing {
-    0% { stroke-dashoffset: 163.36; }
-    50% { stroke-dashoffset: 40.84; }
-    100% { stroke-dashoffset: 163.36; }
-}
-
-#page-wifi .progress-icon {
-    position: absolute;
-    font-size: 24px;
-    font-weight: 600;
-    color: var(--color-primary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#page-wifi .progress-icon svg {
-    width: 28px;
-    height: 28px;
-}
-
-#page-wifi .progress-icon.success {
-    color: var(--color-success);
-}
-
-#page-wifi .progress-icon.success svg {
-    animation: checkmark 0.5s ease-out;
-}
-
-@keyframes checkmark {
-    0% { transform: scale(0) rotate(-45deg); opacity: 0; }
-    50% { transform: scale(1.2) rotate(10deg); }
-    100% { transform: scale(1) rotate(0deg); opacity: 1; }
-}
-
-#page-wifi .progress-icon.error {
-    color: var(--color-danger);
-    animation: errorShake 0.4s ease-in-out;
-}
-
-@keyframes errorShake {
-    0%, 100% { transform: translateX(0); }
-    20%, 60% { transform: translateX(-5px); }
-    40%, 80% { transform: translateX(5px); }
-}
-
-#page-wifi .progress-steps {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--spacing-md);
-    width: 100%;
-}
-
-#page-wifi .progress-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-xs);
-    opacity: 0.4;
-    transition: opacity 0.3s ease;
-}
-
-#page-wifi .progress-step.active {
-    opacity: 1;
-}
-
-#page-wifi .progress-step.completed {
-    opacity: 0.7;
-}
-
-#page-wifi .step-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--color-border-light);
-    color: var(--color-text-muted);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.3s ease;
-}
-
-#page-wifi .step-icon::after {
-    content: '✓';
-    display: none;
-    font-size: 16px;
-}
-
-#page-wifi .progress-step.completed .step-icon {
-    background: var(--color-success);
-    color: white;
-}
-
-#page-wifi .progress-step.completed .step-icon::after {
-    display: block;
-}
-
-#page-wifi .progress-step.completed .step-icon span {
-    display: none;
-}
-
-#page-wifi .progress-step.active .step-icon {
-    background: var(--color-primary);
-    color: white;
-    box-shadow: 0 0 16px rgba(8, 145, 178, 0.4);
-}
-
-#page-wifi .step-text {
-    font-size: 13px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-}
-
-#page-wifi .progress-step.active .step-text {
-    color: var(--color-primary);
-    font-weight: 600;
-}
-
-#page-wifi .progress-status {
-    text-align: center;
-    font-size: 14px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    padding: var(--spacing-sm) var(--spacing-md);
-    background: var(--color-bg-hover);
-    border-radius: var(--radius-sm);
-    border-left: 3px solid var(--color-primary);
-}
-
-#page-wifi .progress-status.success {
-    color: var(--color-success);
-    background: linear-gradient(135deg, rgba(220, 252, 231, 0.5) 0%, rgba(187, 247, 208, 0.5) 100%);
-    border-left-color: var(--color-success);
-}
-
-#page-wifi .progress-status.error {
-    color: var(--color-danger);
-    background: linear-gradient(135deg, rgba(254, 226, 226, 0.5) 0%, rgba(254, 202, 202, 0.5) 100%);
-    border-left-color: var(--color-danger);
-}
-
-/* ==================== 信号强度图标 ==================== */
-#page-wifi .signal-icon {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    width: 16px;
-    height: 12px;
-}
-
-#page-wifi .signal-bar {
-    width: 3px;
-    background: var(--color-text-muted);
-    border-radius: 1px;
-    transition: all 0.3s ease;
-}
-
-#page-wifi .signal-bar:nth-child(1) { height: 4px; }
-#page-wifi .signal-bar:nth-child(2) { height: 6px; }
-#page-wifi .signal-bar:nth-child(3) { height: 9px; }
-#page-wifi .signal-bar:nth-child(4) { height: 12px; }
-
-#page-wifi .signal-4 .signal-bar:nth-child(1),
-#page-wifi .signal-4 .signal-bar:nth-child(2),
-#page-wifi .signal-4 .signal-bar:nth-child(3),
-#page-wifi .signal-4 .signal-bar:nth-child(4) {
-    background: var(--color-success);
-}
-
-#page-wifi .signal-3 .signal-bar:nth-child(1),
-#page-wifi .signal-3 .signal-bar:nth-child(2),
-#page-wifi .signal-3 .signal-bar:nth-child(3) {
-    background: var(--color-success);
-}
-
-#page-wifi .signal-2 .signal-bar:nth-child(1),
-#page-wifi .signal-2 .signal-bar:nth-child(2) {
-    background: var(--color-warning);
-}
-
-#page-wifi .signal-1 .signal-bar:nth-child(1) {
-    background: var(--color-danger);
-}
-
-/* ==================== 加密图标 ==================== */
-#page-wifi .encryption-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    color: var(--color-text-muted);
-}
-
-#page-wifi .encryption-icon svg {
-    width: 12px;
-    height: 12px;
-}
-
-#page-wifi .wifi-item:hover .encryption-icon {
-    color: var(--color-primary);
-}
-
-/* ==================== 已连接标识 ==================== */
-#page-wifi .connected-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.08) 100%);
-    color: var(--color-success);
-    border-radius: var(--radius-sm);
-    font-size: 11px;
-    font-weight: 600;
-    margin-left: var(--spacing-sm);
-}
-
-#page-wifi .connected-badge svg {
-    width: 10px;
-    height: 10px;
-}
-
-#page-wifi .connected-badge .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-success);
-    animation: connectedPulse 2s ease-in-out infinite;
-}
-
-@keyframes connectedPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(0.9); }
-}
-
-/* ==================== 扫描雷达动画 ==================== */
-#page-wifi .scan-progress {
-    text-align: center;
-    padding: var(--spacing-xl);
-    color: var(--color-text-muted);
-}
-
-#page-wifi .scan-progress .radar-animation {
-    position: relative;
-    width: 80px;
-    height: 80px;
-    margin: 0 auto var(--spacing-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#page-wifi .radar-animation::before,
-#page-wifi .radar-animation::after {
-    content: '';
-    position: absolute;
-    border-radius: 50%;
-    border: 2px solid var(--color-primary);
-    animation: radarPulse 2s ease-out infinite;
-}
-
-#page-wifi .radar-animation::before {
-    animation-delay: 0s;
-}
-
-#page-wifi .radar-animation::after {
-    animation-delay: 0.7s;
-}
-
-#page-wifi .radar-animation svg {
-    width: 40px;
-    height: 40px;
-    color: var(--color-primary);
-    animation: radarPulseIcon 1.5s ease-in-out infinite;
-}
-
-@keyframes radarPulse {
-    0% {
-        width: 40px;
-        height: 40px;
-        opacity: 0.8;
-        transform: scale(0.5);
-    }
-    50% {
-        opacity: 0.4;
-    }
-    100% {
-        width: 80px;
-        height: 80px;
-        opacity: 0;
-        transform: scale(1);
-    }
-}
-
-@keyframes radarPulseIcon {
-    0%, 100% {
-        transform: scale(1);
-        opacity: 1;
-    }
-    50% {
-        transform: scale(1.1);
-        opacity: 0.8;
-    }
-}
-
-/* ==================== WiFi列表项交错动画 ==================== */
-@keyframes wifiItemFadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* ==================== 扫描按钮禁用状态 ==================== */
-#page-wifi #scanBtn:disabled {
-    background: linear-gradient(135deg, #CBD5E1 0%, #94A3B8 100%);
-    box-shadow: none;
-    transform: none;
-}
-
-#page-wifi #scanBtn:disabled svg {
-    animation: none;
-}
-
-/* ==================== 响应式调整 ==================== */
-@media (max-width: 768px) {
-    #page-index .container {
-        padding: var(--spacing-xl) var(--spacing-lg);
-        border-radius: var(--radius-lg);
-    }
-
-    #page-index h1 {
-        font-size: 28px;
-    }
-
-    #page-index :where(.btn) {
-        padding: 14px 24px;
-        font-size: 14px;
-    }
-}
-
-@media (max-width: 480px) {
-    #page-index .container {
-        padding: var(--spacing-lg) var(--spacing-md);
-    }
-
-    #page-index h1 {
-        font-size: 24px;
-    }
-
-    #page-index .system-info {
-        font-size: 13px;
-    }
-}
-
-/* ==================== 卡片管理页面样式 ==================== */
-
-/* 通用按钮SVG样式 */
-#page-cards .btn svg {
-    width: 20px;
-    height: 20px;
-    margin-right: 8px;
-    vertical-align: middle;
-}
-
-/* 读取按钮禁用状态 - 旋转动画 */
-#page-cards #readBtn:disabled svg {
-    animation: spin 1s linear infinite;
-}
-
-/* 空状态SVG图标样式 */
-#page-cards .empty-state svg {
-    width: 48px;
-    height: 48px;
-    margin-bottom: 8px;
-}
-
-/* 分隔线样式 */
-#page-cards hr {
-    border: none;
-    border-top: 1px solid var(--color-border-light);
-    margin: var(--spacing-lg) 0;
-}
-
-/* 返回首页容器 */
-#page-cards .back-to-home {
-    text-align: center;
-    margin-top: var(--spacing-xl);
-}
-
-/* 日志容器 */
-#page-cards .log-container {
-    margin-top: var(--spacing-xl);
-}
-
-/* 主要区域样式（一级）- 卡片操作、卡片列表 */
-#page-cards .section.primary {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(236, 254, 255, 0.95) 100%);
-    border: 2px solid rgba(8, 145, 178, 0.25);
-    box-shadow: var(--shadow-md);
-    padding: var(--spacing-xl);
-    margin: var(--spacing-lg) 0;
-}
-
-#page-cards .section.primary h3 {
-    font-size: 18px;
-    color: var(--color-primary);
-    font-weight: 700;
-    margin-bottom: var(--spacing-lg);
-}
-
-#page-cards .section.primary h3 small {
-    font-size: 14px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    margin-left: var(--spacing-xs);
-}
-
-/* 次要区域样式（二级）- 卡片逻辑控制 */
-#page-cards .section.secondary {
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.6) 0%, rgba(241, 245, 249, 0.5) 100%);
-    border: 1px solid rgba(8, 145, 178, 0.08);
-    box-shadow: var(--shadow-sm);
-    padding: var(--spacing-md);
-    margin: var(--spacing-md) 0;
-}
-
-#page-cards .section.secondary h3 {
-    font-size: 15px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    margin-bottom: var(--spacing-sm);
-}
-
-/* 开关容器 */
-#page-cards .toggle-container {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--spacing-md) 0;
-}
-
-/* 次要区域的toggle容器更紧凑 */
-#page-cards .section.secondary .toggle-container {
-    padding: var(--spacing-sm) 0;
-}
-
-/* 输入提示文字 */
-#page-cards .input-hint {
-    display: block;
-    margin-top: var(--spacing-xs);
-    color: var(--color-text-light);
-    font-size: 13px;
-    font-weight: 500;
-}
-
-/* 开关提示文字 */
-#page-cards .toggle-hint {
-    margin-top: var(--spacing-sm);
-    font-size: 13px;
-    color: var(--color-text-muted);
-    line-height: 1.5;
-}
-
-#page-cards .toggle-label {
-    font-weight: 600;
-    font-size: 15px;
-    color: var(--color-text);
-}
-
-#page-cards .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 52px;
-    height: 28px;
-}
-
-#page-cards .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-#page-cards .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(135deg, #CBD5E1 0%, #94A3B8 100%);
-    border-radius: var(--radius-full);
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-inner);
-}
-
-#page-cards .toggle-slider::before {
-    position: absolute;
-    content: '';
-    height: 22px;
-    width: 22px;
-    left: 3px;
-    bottom: 3px;
-    background: white;
-    border-radius: 50%;
-    transition: var(--transition-base);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-#page-cards .toggle-switch:hover .toggle-slider {
-    background: linear-gradient(135deg, #94A3B8 0%, #64748B 100%);
-}
-
-#page-cards .toggle-switch input:checked + .toggle-slider {
-    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
-    box-shadow: 0 0 12px rgba(8, 145, 178, 0.4);
-}
-
-#page-cards .toggle-switch input:focus + .toggle-slider {
-    box-shadow: 0 0 0 3px var(--color-primary-light), var(--shadow-sm);
-}
-
-#page-cards .toggle-switch input:checked + .toggle-slider::before {
-    transform: translateX(24px);
-}
-
-#page-cards .toggle-switch:hover input:checked + .toggle-slider {
-    background: linear-gradient(135deg, var(--color-primary-hover) 0%, #155E75 100%);
-}
-
-/* 读卡器容器 */
-#page-cards .card-reader-container {
-    display: flex;
-    flex-direction: row;
-    gap: var(--spacing-md);
-    align-items: center;
-    justify-content: space-between;
-}
-
-/* 读卡器状态 */
-#page-cards .reader-status {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-md) var(--spacing-lg);
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.9) 0%, rgba(241, 245, 249, 0.9) 100%);
-    backdrop-filter: blur(8px);
-    border-radius: var(--radius-md);
+    margin-top: var(--spacing-md); padding: var(--spacing-lg);
+    background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-light);
-    width: 100%;
-    box-shadow: var(--shadow-sm);
-    transition: var(--transition-base);
-}
-
-#page-cards .reader-status .status-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--color-text-muted);
-    transition: var(--transition-base);
-}
-
-#page-cards .reader-status .status-text {
-    flex: 1;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-}
-
-#page-cards .reader-status.reading .status-indicator {
-    background: var(--color-warning);
-    animation: readerPulse 1s ease-in-out infinite;
-}
-
-#page-cards .reader-status.reading .status-text {
-    color: var(--color-warning);
-}
-
-@keyframes readerPulse {
-    0%, 100% {
-        opacity: 1;
-        transform: scale(1);
-        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
-    }
-    50% {
-        opacity: 0.7;
-        transform: scale(1.1);
-        box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
-    }
-}
-
-#page-cards .reader-status.success .status-indicator {
-    background: var(--color-success);
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
-}
-
-#page-cards .reader-status.success .status-text {
-    color: var(--color-success);
-    font-weight: 600;
-}
-
-#page-cards .reader-status.error .status-indicator {
-    background: var(--color-danger);
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
-}
-
-#page-cards .reader-status.error .status-text {
-    color: var(--color-danger);
-    font-weight: 600;
-}
-
-/* 卡片信息 */
-#page-cards .card-info {
-    width: 100%;
-    padding: var(--spacing-md) var(--spacing-lg);
-    background: linear-gradient(135deg, rgba(236, 254, 255, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
-    backdrop-filter: blur(8px);
     border-radius: var(--radius-md);
-    border: 2px solid var(--color-primary);
-    box-shadow: var(--shadow-sm), 0 0 16px rgba(8, 145, 178, 0.15);
-    animation: cardInfoSlideIn 0.3s ease-out;
+    display: flex; flex-direction: column; align-items: center; gap: var(--spacing-md);
 }
-
-@keyframes cardInfoSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+#page-wifi .progress-ring { position: relative; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; }
+#page-wifi .progress-ring-svg { transform: rotate(-90deg); }
+#page-wifi .progress-ring-bg { stroke: var(--color-border); fill: none; }
+#page-wifi .progress-ring-circle { stroke: var(--color-primary); fill: none; stroke-linecap: round; transition: stroke-dashoffset 0.3s ease; }
+#page-wifi .progress-icon { position: absolute; color: var(--color-primary); display: flex; align-items: center; justify-content: center; }
+#page-wifi .progress-icon svg { width: 24px; height: 24px; }
+#page-wifi .progress-icon.success { color: var(--color-success); }
+#page-wifi .progress-icon.error { color: var(--color-danger); }
+#page-wifi .progress-steps { display: flex; align-items: center; justify-content: center; gap: var(--spacing-md); width: 100%; }
+#page-wifi .progress-step { display: flex; flex-direction: column; align-items: center; gap: var(--spacing-xs); opacity: 0.45; transition: opacity 0.2s ease; }
+#page-wifi .progress-step.active { opacity: 1; }
+#page-wifi .progress-step.completed { opacity: 0.8; }
+#page-wifi .step-icon {
+    width: 28px; height: 28px; border-radius: var(--radius-full);
+    background: var(--color-border); color: var(--color-text-secondary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600;
 }
-
-#page-cards .card-info .info-label {
-    font-size: 13px;
-    color: var(--color-text-muted);
-    font-weight: 500;
-    margin-bottom: var(--spacing-xs);
-}
-
-#page-cards .card-info .info-value {
-    font-size: 18px;
-    font-family: var(--font-heading);
-    font-weight: 600;
-    color: var(--color-primary);
-    letter-spacing: 0.05em;
-    background: var(--color-primary-light);
-    padding: 8px 16px;
-    border-radius: var(--radius-sm);
-    display: inline-block;
-}
-
-/* 卡片列表 */
-#page-cards .cards-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-}
-
-/* 卡片项 */
-#page-cards .card-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--spacing-md) var(--spacing-lg);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.9) 100%);
-    backdrop-filter: blur(8px);
-    border-radius: var(--radius-md);
-    border-left: 3px solid var(--color-primary);
-    box-shadow: var(--shadow-sm);
-    transition: var(--transition-base);
-    animation: cardItemFadeIn 0.3s ease-out forwards;
-}
-
-@keyframes cardItemFadeIn {
-    from {
-        opacity: 0;
-        transform: translateX(-10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-
-#page-cards .card-item:hover {
+#page-wifi .progress-step.active .step-icon { background: var(--color-primary); color: #fff; }
+#page-wifi .progress-step.completed .step-icon { background: var(--color-success); color: #fff; }
+#page-wifi .step-text { font-size: 12px; color: var(--color-text-muted); }
+#page-wifi .progress-step.active .step-text { color: var(--color-primary-hover); font-weight: 600; }
+#page-wifi .progress-status {
+    text-align: center; font-size: 13px; color: var(--color-text-secondary);
+    padding: var(--spacing-xs) var(--spacing-md); border-radius: var(--radius-sm);
     background: var(--color-bg-hover);
-    transform: translateX(4px);
-    box-shadow: var(--shadow-md);
-    border-left-color: var(--color-primary-hover);
 }
+#page-wifi .progress-status.success { color: var(--color-success); }
+#page-wifi .progress-status.error { color: var(--color-danger); }
 
-#page-cards .card-item:active {
-    transform: translateX(2px);
+/* ============================================================
+   #page-files
+   Base .upload-area / .upload-content / .file-info / .upload-progress* /
+   .path-bar / .path-btn / .path-chip / .item / .empty are owned by
+   style.css. Rules below cover the page-specific aliases only.
+   ============================================================ */
+
+/* upload stack + dropzone caption glyph (alias markup) */
+#page-files .upload-wrapper { display: flex; flex-direction: column; gap: var(--spacing-md); }
+#page-files .upload-icon { width: 40px; height: 40px; color: var(--color-primary-hover); }
+#page-files .upload-text { font-size: 14px; color: var(--color-text-muted); margin: 0; }
+
+/* selected-file summary (alias markup) */
+#page-files .file-info-icon { width: 40px; height: 40px; color: var(--color-primary-hover); }
+#page-files .file-info-details { display: flex; flex-direction: column; gap: var(--spacing-xs); text-align: center; }
+#page-files .file-name { font-family: var(--font-heading); font-size: 13px; font-weight: 600; color: var(--color-text); word-break: break-all; }
+#page-files .file-size { font-family: var(--font-heading); font-size: 12px; color: var(--color-text-muted); }
+
+/* upload progress block (alias markup; current HTML uses .upload-progress from style.css) */
+#page-files .upload-progress-wrapper { display: none; flex-direction: column; gap: var(--spacing-xs); }
+#page-files .upload-progress-wrapper.active { display: flex; }
+#page-files .upload-progress-container { position: relative; width: 100%; height: 20px; background: var(--color-border); border-radius: var(--radius-full); overflow: hidden; }
+#page-files .upload-status-text { font-size: 12px; color: var(--color-text-muted); text-align: right; font-family: var(--font-heading); }
+
+/* ============================================================
+   #page-cards
+   ============================================================ */
+
+/* section variants — flat. primary = base white card; secondary = inset Slate-50 well */
+#page-cards .section.primary { padding: var(--spacing-lg); }
+#page-cards .section.secondary {
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border-light);
+    box-shadow: none;
+    padding: var(--spacing-md);
 }
+#page-cards .section.secondary h3 { font-size: 14px; font-weight: 600; color: var(--color-text-secondary); }
 
-#page-cards .card-content {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
+/* card logic toggle */
+#page-cards .toggle-container { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-md); padding: var(--spacing-xs) 0; }
+#page-cards .toggle-label { font-size: 15px; font-weight: 600; color: var(--color-text); }
+#page-cards .toggle-hint { margin-top: var(--spacing-sm); font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
+#page-cards .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+#page-cards .toggle-switch input { opacity: 0; width: 0; height: 0; }
+#page-cards .toggle-slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: var(--color-border-hover);
+    border-radius: var(--radius-full);
+    transition: var(--transition-fast);
 }
-
-#page-cards .card-uid {
-    font-family: var(--font-heading);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-primary);
-    letter-spacing: 0.05em;
+#page-cards .toggle-slider::before {
+    content: ''; position: absolute;
+    height: 20px; width: 20px; left: 3px; bottom: 3px;
+    background: var(--color-bg-card); border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition-fast);
 }
+#page-cards .toggle-switch input:checked + .toggle-slider { background: var(--color-primary); }
+#page-cards .toggle-switch input:checked + .toggle-slider::before { transform: translateX(22px); }
+#page-cards .toggle-switch input:focus-visible + .toggle-slider { box-shadow: 0 0 0 3px var(--color-primary-light); }
 
-#page-cards .card-name {
-    font-size: 14px;
-    color: var(--color-text-muted);
-    font-weight: 500;
+/* reader + read button row */
+#page-cards .card-reader-container { display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap; }
+#page-cards .card-reader-container .btn { flex-shrink: 0; }
+
+#page-cards .reader-status {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    flex: 1; min-width: 0;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+    font-size: 14px; color: var(--color-text-secondary);
 }
+#page-cards .reader-status .status-indicator { width: 10px; height: 10px; border-radius: 50%; background: var(--color-text-light); flex-shrink: 0; }
+#page-cards .reader-status .status-text,
+#page-cards .reader-status > span { flex: 1; min-width: 0; font-weight: 500; }
 
+#page-cards .reader-status.reading { border-color: rgba(217, 119, 6, 0.3); background: rgba(217, 119, 6, 0.06); }
+#page-cards .reader-status.reading .status-indicator { background: var(--color-warning); }
+#page-cards .reader-status.reading .status-text,
+#page-cards .reader-status.reading > span { color: #B45309; }
+#page-cards .reader-status.success { border-color: rgba(22, 163, 74, 0.3); background: rgba(22, 163, 74, 0.06); }
+#page-cards .reader-status.success .status-indicator { background: var(--color-success); }
+#page-cards .reader-status.success .status-text,
+#page-cards .reader-status.success > span { color: #15803D; font-weight: 600; }
+#page-cards .reader-status.error { border-color: rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.06); }
+#page-cards .reader-status.error .status-indicator { background: var(--color-danger); }
+#page-cards .reader-status.error .status-text,
+#page-cards .reader-status.error > span { color: var(--color-danger-hover); font-weight: 600; }
+
+/* read-card info panel (alias markup) */
+#page-cards .card-info {
+    width: 100%; padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-primary-light);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+    border-radius: var(--radius-sm);
+    margin-top: var(--spacing-sm);
+    text-align: left;
+}
+#page-cards .card-info .info-label { display: block; font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px; }
+#page-cards .card-info .info-value { font-family: var(--font-heading); font-size: 15px; font-weight: 600; color: var(--color-primary-hover); letter-spacing: 0.03em; word-break: break-all; }
+
+/* authorized card list */
+#page-cards .cards-list { display: flex; flex-direction: column; gap: var(--spacing-xs); text-align: left; }
+#page-cards .card-item {
+    display: flex; align-items: center; gap: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border-light);
+    border-left: 3px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+#page-cards .card-item:hover { background: var(--color-bg-hover); border-left-color: var(--color-primary); }
+#page-cards .card-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#page-cards .card-uid { font-family: var(--font-heading); font-size: 14px; font-weight: 600; color: var(--color-text); letter-spacing: 0.03em; word-break: break-all; }
+#page-cards .card-name { font-size: 13px; color: var(--color-text-muted); }
+
+/* compact destructive icon button (markup: .btn-icon.btn-danger) */
 #page-cards .card-item .btn-icon {
     flex-shrink: 0;
-    width: 36px;
-    height: 36px;
+    width: 32px; height: 32px; padding: 0; min-height: unset;
     border-radius: var(--radius-sm);
-    border: none;
-    background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
-    color: var(--color-danger);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: var(--transition-base);
-    box-shadow: var(--shadow-sm);
+    display: flex; align-items: center; justify-content: center;
 }
+#page-cards .card-item .btn-icon svg { width: 16px; height: 16px; }
 
-#page-cards .card-item .btn-icon:hover {
-    background: linear-gradient(135deg, var(--color-danger-hover) 0%, #B91C1C 100%);
-    box-shadow: var(--shadow-md), 0 0 15px rgba(239, 68, 68, 0.3);
-}
-
-#page-cards .card-item .btn-icon:active {
-    transform: scale(1.05);
-}
-
-#page-cards .card-item .btn-icon svg {
-    width: 18px;
-    height: 18px;
-    transition: var(--transition-base);
-}
-
-#page-cards .card-item .btn-icon:hover svg {
-    transform: scale(1.1);
-}
-
-#page-cards .card-item .btn-icon:focus-visible {
-    outline: 2px solid var(--color-danger-light);
-    outline-offset: 2px;
-}
-
-/* 空状态 */
 #page-cards .empty-state {
-    text-align: center;
-    padding: var(--spacing-2xl) var(--spacing-md);
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.8) 100%);
-    backdrop-filter: blur(8px);
-    border-radius: var(--radius-md);
+    text-align: center; padding: var(--spacing-xl) var(--spacing-md);
+    background: var(--color-bg-elevated);
     border: 2px dashed var(--color-border);
-    color: var(--color-text-light);
-    transition: var(--transition-base);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+}
+#page-cards .empty-state svg { width: 40px; height: 40px; margin-bottom: var(--spacing-sm); }
+#page-cards .empty-state p { margin: 0; font-size: 14px; }
+
+#page-cards .input-hint { display: block; margin-top: var(--spacing-xs); color: var(--color-text-muted); font-size: 13px; }
+#page-cards hr { border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-lg) 0; }
+#page-cards .back-to-home { text-align: center; margin-top: var(--spacing-xl); }
+
+/* ============================================================
+   #page-servo
+   ============================================================ */
+#page-servo .servo-position-control { margin-bottom: var(--spacing-lg); }
+#page-servo .position-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-sm); }
+#page-servo .position-header label { font-size: 14px; font-weight: 600; color: var(--color-text); }
+#page-servo .position-percent {
+    font-family: var(--font-heading); font-size: 13px; font-weight: 600;
+    color: var(--color-primary-hover);
+    padding: 2px 10px;
+    background: var(--color-primary-light);
+    border: 1px solid rgba(8, 145, 178, 0.15);
+    border-radius: var(--radius-sm);
+    min-width: 48px; text-align: center;
+}
+#page-servo .position-control-row { display: flex; align-items: center; gap: var(--spacing-md); }
+
+/* range slider — flat track, solid accent thumb, no glow */
+#page-servo .slider {
+    flex: 1; -webkit-appearance: none; appearance: none;
+    height: 6px; border-radius: var(--radius-full);
+    background: var(--color-border);
+    outline: none; cursor: pointer;
+}
+#page-servo .slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--color-primary);
+    border: 2px solid var(--color-bg-card);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer; transition: var(--transition-fast);
+}
+#page-servo .slider::-moz-range-thumb {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--color-primary);
+    border: 2px solid var(--color-bg-card);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer; transition: var(--transition-fast);
+}
+#page-servo .slider:hover::-webkit-slider-thumb { background: var(--color-primary-hover); }
+#page-servo .slider:hover::-moz-range-thumb { background: var(--color-primary-hover); }
+#page-servo .slider:focus-visible { outline: none; }
+#page-servo .slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--color-primary-light); }
+#page-servo .slider:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--color-primary-light); }
+
+#page-servo .position-input {
+    width: 90px; padding: 8px 10px;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-bg-card); color: var(--color-text);
+    font-family: var(--font-heading); font-size: 14px; font-weight: 600;
+    text-align: center;
+    transition: var(--transition-fast);
+}
+#page-servo .position-input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-light); }
+
+/* ============================================================
+   #page-ota
+   ============================================================ */
+#page-ota .system-info-grid { display: flex; flex-direction: column; text-align: left; }
+#page-ota .info-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-xs) 0;
+    font-size: 14px; color: var(--color-text-muted);
+}
+#page-ota .info-item:not(:last-child) { border-bottom: 1px solid var(--color-border-light); }
+#page-ota .info-item strong { color: var(--color-text); font-weight: 600; }
+#page-ota .info-item span { font-family: var(--font-heading); color: var(--color-text-secondary); text-align: right; word-break: break-all; }
+
+#page-ota .note-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--spacing-sm); text-align: left; }
+#page-ota .note-list li { position: relative; padding-left: var(--spacing-lg); font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
+#page-ota .note-list li::before {
+    content: ''; position: absolute; left: 4px; top: 9px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--color-primary);
 }
 
-#page-cards .empty-state svg {
-    transition: var(--transition-base);
+/* ============================================================
+   Responsive (phone-first; 768 / 480). Global container, h1, btn,
+   toast, dialog, log-window rules live in style.css.
+   ============================================================ */
+@media (min-width: 768px) {
+    /* home: 3-col nav grid on desktop, 2-col on phone */
+    #page-index .btn-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
-#page-cards .empty-state:hover svg {
-    transform: scale(1.1);
-    stroke: var(--color-primary);
-}
-
-#page-cards .empty-state p {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 500;
-}
-
-/* 响应式调整 */
 @media (max-width: 768px) {
-    #page-cards .card-reader-container {
-        flex-direction: column;
-        align-items: stretch;
-    }
+    /* wifi: stack action row + connection controls */
+    #page-wifi .wifi-actions-row { flex-direction: column; }
 
-    #page-cards .card-item {
-        padding: var(--spacing-md);
-        flex-wrap: wrap;
-    }
+    /* cards: reader row stacks, card item wraps */
+    #page-cards .card-reader-container { flex-direction: column; align-items: stretch; }
+    #page-cards .card-reader-container .btn { width: 100%; }
+    #page-cards .card-item { flex-wrap: wrap; padding: var(--spacing-sm) var(--spacing-md); }
+    #page-cards .card-content { min-width: calc(100% - 40px); }
 
-    #page-cards .card-content {
-        min-width: calc(100% - 48px);
-    }
-
-    #page-cards .card-item .btn-icon {
-        margin-left: auto;
-    }
-
-    #page-cards .card-info .info-value {
-        font-size: 16px;
-        word-break: break-all;
-    }
+    /* servo: control row wraps, slider + input go full-width */
+    #page-servo .btn-group.horizontal { flex-direction: column; }
+    #page-servo .position-control-row { flex-wrap: wrap; }
+    #page-servo .slider { flex-basis: 100%; }
+    #page-servo .position-input { width: 100%; }
 }
 
 @media (max-width: 480px) {
-    #page-cards .reader-status {
-        padding: var(--spacing-sm) var(--spacing-md);
-    }
-
-    #page-cards .reader-status .status-text {
-        font-size: 13px;
-    }
-
-    #page-cards .card-info {
-        padding: var(--spacing-sm) var(--spacing-md);
-    }
-
-    #page-cards .card-info .info-value {
-        font-size: 14px;
-        padding: 6px 12px;
-    }
-
-    #page-cards .toggle-container {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--spacing-sm);
-    }
-
-    #page-cards .toggle-switch {
-        align-self: flex-end;
-    }
-
-    #page-cards .empty-state {
-        padding: var(--spacing-xl) var(--spacing-sm);
-    }
+    #page-cards .reader-status { padding: var(--spacing-sm) var(--spacing-md); }
+    #page-cards .card-info .info-value { font-size: 14px; }
+    #page-cards .toggle-container { flex-direction: column; align-items: flex-start; gap: var(--spacing-sm); }
+    #page-cards .toggle-switch { align-self: flex-end; }
+    #page-cards .empty-state { padding: var(--spacing-lg) var(--spacing-sm); }
 }
