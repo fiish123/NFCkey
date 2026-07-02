@@ -34,25 +34,25 @@
         <div class="section" id="uploadSection">
             <h3>升级包上传</h3>
             <div class="upload-box" id="uploadBox" role="button" tabindex="0" aria-label="选择升级包或拖拽文件到此处">
-                <input type="file" id="file" accept=".zip" style="display: none;" aria-label="选择升级包" aria-describedby="otaUploadHint" />
+                <input type="file" id="file" accept=".zip" class="is-hidden" aria-label="选择升级包" aria-describedby="otaUploadHint" />
                 <div id="uploadBoxContent" class="upload-box-content">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 48px; height: 48px; margin-bottom: var(--spacing-md);" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
                     <p>点击选择升级包或拖拽 `.zip` 文件到此处</p>
-                    <p id="otaUploadHint" class="hint" style="font-size: 12px; color: var(--color-text-secondary); margin-top: var(--spacing-sm);">
+                    <p id="otaUploadHint" class="hint">
                         升级包需包含 `firmware.bin` 和 `data/` 目录内的文件系统资源
                     </p>
                 </div>
-                <div id="fileInfo" style="display: none; text-align: center;">
+                <div id="fileInfo" class="is-hidden">
                     <p><strong>升级包:</strong> <span id="fileName"></span></p>
                     <p><strong>大小:</strong> <span id="fileSize"></span></p>
                 </div>
             </div>
 
-            <div class="section system-info" id="packageSummary" style="display: none; margin-top: var(--spacing-lg);">
+            <div class="section system-info is-hidden" id="packageSummary">
                 <h3>升级包摘要</h3>
                 <div class="system-info-grid">
                     <div class="info-item">
@@ -75,14 +75,14 @@
             </div>
 
             <!-- 上传进度 -->
-            <div id="progressContainer" style="display: none; margin-top: var(--spacing-lg);">
+            <div id="progressContainer" class="is-hidden">
                 <div class="progress-bar-container">
                     <div id="progressBar" class="progress-bar" role="status" aria-live="polite">0%</div>
                 </div>
-                <p id="progressStage" class="progress-hint" style="text-align: center; color: var(--color-text); font-size: 14px; margin-top: var(--spacing-sm);">
+                <p id="progressStage" class="progress-hint">
                     等待开始
                 </p>
-                <p class="progress-hint" style="text-align: center; color: var(--color-text-secondary); font-size: 13px; margin-top: var(--spacing-sm);">
+                <p class="progress-hint">
                     页面会先同步文件系统资源，再上传固件并自动重启设备
                 </p>
             </div>
@@ -101,9 +101,9 @@
         </div>
 
         <!-- 返回首页 -->
-        <div style="text-align: center; margin-top: var(--spacing-xl);">
+        <div class="back-to-home">
             <a href="/" class="btn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>

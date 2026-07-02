@@ -664,13 +664,27 @@ static void appendJsonString(String &out, const char *value)
             const unsigned char c = static_cast<unsigned char>(*p);
             switch (c)
             {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\b':
+                out += "\\b";
+                break;
+            case '\f':
+                out += "\\f";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
             default:
                 if (c < 0x20)
                 {
@@ -1145,7 +1159,6 @@ void wifiScanTask(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
-
     // 内存优化：直接在单个 resultDoc 内就地构建 data（数组或对象），
     // 避免先构建独立 doc 再用 resultDoc["data"]=doc 对整个 networks 数组深拷贝。
     JsonDocument resultDoc;
@@ -1467,10 +1480,15 @@ void initWebSocket()
                    AwsEventType type, void *arg, uint8_t *data, size_t len)
                 {
         switch (type) {
-            case WS_EVT_CONNECT:
+           case WS_EVT_CONNECT:
             {
+                if (server->count() > 2) {
+                    client->close(4013, "Too many WebSocket connections");
+                    LOG_E("Client #%u rejected (limit reached)\n", client->id());
+                }else{
                 client->setCloseClientOnQueueFull(false);
-                LOG_D("WebSocket客户端连接: ID=%u", client->id());
+                LOG_D("WebSocket 客户端连接: ID=%u (当前总数: %u)", client->id(), server->count());
+                }
                 break;
             }
             case WS_EVT_DISCONNECT:
@@ -1540,6 +1558,8 @@ void initWebSocket()
                       client ? client->status() : 0,
                       (client && client->queueIsFull()) ? "true" : "false",
                       static_cast<unsigned int>(len));
+                if (client) client->close();  // 强制关闭异常连接
+                server->cleanupClients();
                 break;
             }
             case WS_EVT_PING:
@@ -2881,7 +2901,7 @@ void initWebServer()
     if (connectToWiFi(savedSSID, savedPassword, 20))
     {
         addTolist(9);
-        
+
         wifisuccess = true;
     }
     else

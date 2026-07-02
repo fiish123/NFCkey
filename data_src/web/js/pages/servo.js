@@ -152,24 +152,10 @@
     percentElement.textContent = percent + "%";
   }
 
+  // 解锁/锁定执行期间禁用按钮（#servoStatus 状态文字已移除，仅保留防重复点击的按钮禁用）
   function updateServoStatus(busy) {
-    const statusDiv = document.getElementById("servoStatus");
-    const unlockBtn = document.getElementById("unlockBtn");
-    const lockBtn = document.getElementById("lockBtn");
-
-    if (busy) {
-      statusDiv.className = "servo-status busy";
-      statusDiv.innerHTML =
-        '<span class="status-dot"></span><span>状态: 执行中...</span>';
-      unlockBtn.disabled = true;
-      lockBtn.disabled = true;
-    } else {
-      statusDiv.className = "servo-status idle";
-      statusDiv.innerHTML =
-        '<span class="status-dot"></span><span>状态: 空闲</span>';
-      unlockBtn.disabled = false;
-      lockBtn.disabled = false;
-    }
+    document.getElementById("unlockBtn").disabled = busy;
+    document.getElementById("lockBtn").disabled = busy;
   }
 
   // 加载配置

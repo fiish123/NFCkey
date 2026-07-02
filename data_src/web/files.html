@@ -34,16 +34,16 @@
         <div class="section" id="uploadSection">
             <h3>上传文件</h3>
             <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="选择要上传的文件或拖拽文件到此处">
-                <input type="file" id="file" style="display: none;" aria-label="选择要上传的文件" />
+                <input type="file" id="file" class="is-hidden" aria-label="选择要上传的文件" />
             <div id="uploadContent" class="upload-content">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 48px; height: 48px; margin-bottom: var(--spacing-md);" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
                     <p>点击选择文件或拖拽文件到此处</p>
                 </div>
-                <div id="fileInfo" style="display: none;">
+                <div id="fileInfo" class="is-hidden">
                     <p><strong>文件名:</strong> <span id="fileName"></span></p>
                     <p><strong>大小:</strong> <span id="fileSize"></span></p>
                 </div>
@@ -83,9 +83,9 @@
         </div>
 
         <!-- 返回首页 -->
-        <div style="text-align: center; margin-top: var(--spacing-xl);">
+        <div class="back-to-home">
             <a href="/" class="btn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>

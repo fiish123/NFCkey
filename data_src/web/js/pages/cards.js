@@ -202,7 +202,7 @@ async function loadCardsList() {
         // 显示空状态
         cardsList.innerHTML = `
                     <div class="empty-state">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="2" y="5" width="20" height="14" rx="2"></rect>
                             <line x1="2" y1="10" x2="22" y2="10"></line>
                         </svg>
@@ -221,7 +221,7 @@ async function loadCardsList() {
                             <div class="card-uid">${card.uid}</div>
                             <div class="card-name">${escapeHtml(card.name)}</div>
                         </div>
-                        <button onclick="deleteCard('${card.uid}')" class="btn-icon btn-danger" aria-label="删除卡片">
+                        <button onclick="deleteCard('${card.uid}')" class="btn-icon btn-delete" aria-label="删除卡片">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>

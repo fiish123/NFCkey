@@ -2,18 +2,170 @@
    doorkey admin UI — page-level stylesheet (pages.css)
    Phase 4 minimalist rewrite.
    Page-scoped layout on #page-* body-ID hooks, reusing the
-   locked style.css design tokens. Flat Slate-50 surfaces, white
-   cards w/ 1px Slate-200 hairline + one soft shadow; one accent
-   (#0891B2 fill / #0E7490 hover+text); semantic color ONLY for
-   state. No gradient fills, no blur backdrops, no glow shadows,
-   no shine sweeps; motion reuses style.css's seven keyframes only.
+    locked style.css design tokens. Flat Slate-50 surfaces, white
+    cards w/ 1px Slate-200 hairline + one soft shadow; one accent
+    (#0E7490 fill+border, #155E75 hover, accent text #0E7490);
+    semantic color ONLY for state. No gradient fills, no blur
+    backdrops, no glow shadows, no shine sweeps; motion reuses
+    style.css's seven keyframes only.
    Class + state-class names preserved verbatim per JS contract.
    ============================================================ */
 
 /* ============================================================
-   #page-index — home
-   Uniform neutral ghost nav tiles; status strip inherits style.css.
+   #page-index — home dashboard
+   Hero banner (the one sanctioned gradient + accent glow) anchors the
+   page; two side-by-side status tiles carry live WiFi + battery state;
+   nav stays a neutral ghost grid with an accent affordance on hover.
    ============================================================ */
+
+/* --- Hero / device identity --- */
+#page-index .hero {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin: 0 0 var(--spacing-lg);
+    padding: var(--spacing-lg);
+    border-radius: var(--radius-lg);
+    background: var(--hero-gradient);
+    box-shadow: var(--shadow-glow-accent);   /* the one soft accent halo */
+    color: #fff;
+    text-align: left;
+}
+/* soft top-right light bloom + one faint concentric ring (a quiet NFC-wave
+   nod). Decorative only; pointer-events:none keeps them off the a11y tree. */
+#page-index .hero::before {
+    content: '';
+    position: absolute;
+    top: -50px; right: -40px;
+    width: 170px; height: 170px;
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.18), transparent 62%);
+    pointer-events: none;
+}
+#page-index .hero::after {
+    content: '';
+    position: absolute;
+    top: -26px; right: -26px;
+    width: 80px; height: 80px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 50%;
+    box-shadow: 0 0 0 12px rgba(255, 255, 255, 0), 0 0 0 13px rgba(255, 255, 255, 0.07);
+    pointer-events: none;
+}
+#page-index .hero-text { position: relative; z-index: 1; min-width: 0; }
+#page-index .hero h1 {
+    margin: 0;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+}
+#page-index .hero-subtitle {
+    margin: 2px 0 0;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+/* --- Status tiles (WiFi + battery). #wifi / #battery are the containers
+   JS rewrites; state-* classes drive semantic coloring of the icon chip,
+   the label, and the left accent stripe. --- */
+#page-index .status-tiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-md);
+    margin: 0 0 var(--spacing-lg);
+}
+#page-index .status-tile {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-border);   /* state paints this */
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    text-align: left;
+    transition: var(--transition-base);
+}
+#page-index .status-tile .tile-icon {
+    flex-shrink: 0;
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-muted);
+    transition: var(--transition-fast);
+}
+#page-index .status-tile .tile-icon svg { width: 20px; height: 20px; }
+#page-index .status-tile .tile-body { flex: 1; min-width: 0; }
+#page-index .status-tile .tile-label {
+    font-size: 11px; font-weight: 700;
+    color: var(--color-text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 2px;
+}
+#page-index .status-tile .tile-value {
+    font-size: 15px; font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.3;
+    word-break: break-word;
+}
+#page-index .status-tile .tile-sub {
+    margin-top: 2px;
+    font-family: var(--font-heading);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    word-break: break-all;
+}
+
+/* state = success (WiFi connected / battery normal) */
+#page-index .status-tile.state-success { border-left-color: var(--color-success); }
+#page-index .status-tile.state-success .tile-icon { background: rgba(22, 163, 74, 0.10); color: var(--color-success); }
+#page-index .status-tile.state-success .tile-label { color: var(--color-success-hover); }
+/* state = warning (AP mode / battery low) */
+#page-index .status-tile.state-warning { border-left-color: var(--color-warning); }
+#page-index .status-tile.state-warning .tile-icon { background: rgba(217, 119, 6, 0.10); color: var(--color-warning); }
+#page-index .status-tile.state-warning .tile-label { color: var(--color-warning-hover); }
+/* state = danger (battery critical) */
+#page-index .status-tile.state-danger { border-left-color: var(--color-danger); }
+#page-index .status-tile.state-danger .tile-icon { background: rgba(220, 38, 38, 0.10); color: var(--color-danger); }
+#page-index .status-tile.state-danger .tile-label { color: var(--color-danger-hover); }
+/* state = muted (disconnected / loading / fetch-failed) — default look */
+#page-index .status-tile.state-muted .tile-label { color: var(--color-text-muted); }
+
+/* battery level bar — colored by the tile's state class */
+#page-index .battery-row {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+}
+#page-index .battery-bar {
+    flex: 1; height: 6px;
+    background: var(--color-border);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+#page-index .battery-bar-fill {
+    display: block; height: 100%; width: 0%;
+    background: var(--color-success);
+    border-radius: var(--radius-full);
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#page-index .status-tile.state-warning .battery-bar-fill { background: var(--color-warning); }
+#page-index .status-tile.state-danger .battery-bar-fill { background: var(--color-danger); }
+#page-index .battery-pct {
+    flex-shrink: 0;
+    min-width: 34px;
+    font-family: var(--font-heading);
+    font-size: 12px; font-weight: 600;
+    color: var(--color-text-muted);
+    text-align: right;
+}
+
+/* --- Nav grid --- */
 #page-index .btn-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -29,12 +181,9 @@
     font-size: 15px;
 }
 
-/* De-rainbow: every nav tile is a neutral ghost, including the
-   legacy .btn-primary / .btn-danger tiles. Color is reserved for
-   real state, not for "which tile". */
-#page-index .btn-grid .btn,
-#page-index .btn-grid .btn.btn-primary,
-#page-index .btn-grid .btn.btn-danger {
+/* De-rainbow: every nav tile is a neutral ghost on a white card face.
+    Color is reserved for real state, not for "which tile". */
+#page-index .btn-grid .btn {
     background: var(--color-bg-card);
     border-color: var(--color-border);
     color: var(--color-text-secondary);
@@ -43,33 +192,89 @@
     background: var(--color-bg-hover);
     border-color: var(--color-border-hover);
     color: var(--color-text);
+    box-shadow: var(--shadow-sm);   /* row-tier hover lift (no translate: keeps .btn:active scale clean) */
 }
+/* hover affordance: the glyph warms to the accent so each tile feels alive
+   without reintroducing a per-tile color identity. */
+#page-index .btn-grid .btn:hover svg { color: var(--color-primary-hover); }
+
 
 /* ============================================================
    #page-wifi
    ============================================================ */
 
-/* status + scan section */
-#page-wifi .wifi-status-section { margin: var(--spacing-lg) 0; padding: var(--spacing-lg); text-align: left; }
-#page-wifi .status-indicator {
-    display: flex; align-items: center; gap: var(--spacing-sm);
-    padding: var(--spacing-sm) var(--spacing-md);
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border-light);
+/* --- Connection status banner (page's primary info anchor) ---
+   Prominent full-width tile. JS swaps the state-* class on
+   #wifiStatusBanner from getWifiStatus(); the state paints the
+   left accent stripe, icon chip, label, and status dot. Mirrors
+   the home .status-tile semantic model: connected→success,
+   AP mode→warning, else muted. */
+#page-wifi .wifi-status-banner {
+    display: flex; align-items: center; gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-border);   /* state paints this */
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    text-align: left;
+}
+#page-wifi .status-banner-icon {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
     border-radius: var(--radius-sm);
-    font-size: 14px; color: var(--color-text-secondary);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-muted);
+    transition: var(--transition-fast);
 }
-#page-wifi .status-dot {
-    width: 10px; height: 10px; border-radius: 50%;
+#page-wifi .status-banner-icon svg { width: 22px; height: 22px; }
+#page-wifi .status-banner-body { flex: 1; min-width: 0; }
+#page-wifi .status-banner-label {
+    display: block;
+    font-size: 11px; font-weight: 700;
+    color: var(--color-text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 2px;
+}
+#page-wifi .status-banner-text {
+    display: block;
+    font-size: 15px; font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.3;
+    word-break: break-word;
+}
+/* status dot — color driven by banner state (no JS dot class needed) */
+#page-wifi .wifi-status-banner .status-dot {
+    width: 12px; height: 12px; border-radius: 50%;
     background: var(--color-text-light); flex-shrink: 0;
+    transition: var(--transition-fast);
 }
-#page-wifi .status-dot.connected { background: var(--color-success); }
-#page-wifi .status-dot.connecting { background: var(--color-warning); }
-#page-wifi .wifi-scan-btn { width: 100%; margin-top: var(--spacing-md); }
 
-/* scan result list */
-#page-wifi .wifi-list { display: flex; flex-direction: column; gap: var(--spacing-xs); margin: var(--spacing-md) 0; text-align: left; }
+#page-wifi .wifi-status-banner.state-success { border-left-color: var(--color-success); }
+#page-wifi .wifi-status-banner.state-success .status-banner-icon { background: rgba(22, 163, 74, 0.10); color: var(--color-success); }
+#page-wifi .wifi-status-banner.state-success .status-banner-label { color: var(--color-success-hover); }
+#page-wifi .wifi-status-banner.state-success .status-dot { background: var(--color-success); }
+
+#page-wifi .wifi-status-banner.state-warning { border-left-color: var(--color-warning); }
+#page-wifi .wifi-status-banner.state-warning .status-banner-icon { background: rgba(217, 119, 6, 0.10); color: var(--color-warning); }
+#page-wifi .wifi-status-banner.state-warning .status-banner-label { color: var(--color-warning-hover); }
+#page-wifi .wifi-status-banner.state-warning .status-dot { background: var(--color-warning); }
+
+/* state-muted = disconnected / loading / fetch-failed — default look */
+
+/* --- Scan button (primary CTA inside the networks section) --- */
+#page-wifi .wifi-scan-btn { width: 100%; }
+
+/* --- Available-networks list --- */
+#page-wifi .wifi-list { display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-md); text-align: left; }
 #page-wifi .wifi-empty-text { text-align: center; color: var(--color-text-muted); padding: var(--spacing-md) 0; font-size: 14px; }
+#page-wifi .wifi-count { text-align: center; color: var(--color-text-muted); font-size: 13px; margin-bottom: var(--spacing-sm); }
+
+/* scan-result empty / error states reuse the global .empty box; the
+   retry action sits centered beneath it (no inline styles). */
+#page-wifi .wifi-list .empty { margin-bottom: var(--spacing-md); }
+#page-wifi .wifi-result-actions { display: flex; justify-content: center; }
 
 #page-wifi .wifi-item {
     display: flex; align-items: center;
@@ -81,22 +286,34 @@
     transition: var(--transition-fast);
     min-height: 56px;
 }
-#page-wifi .wifi-item:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); }
+#page-wifi .wifi-item:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); box-shadow: var(--shadow-sm); }
 #page-wifi .wifi-item.selected { background: var(--color-primary-light); border-color: var(--color-primary); }
 #page-wifi .wifi-item.selected .wifi-name,
 #page-wifi .wifi-item.selected .wifi-icon { color: var(--color-primary-hover); }
 
+/* staggered enter — classes toggled by JS (no inline styles).
+   The visible-state transition re-lists var(--transition-fast) FIRST
+   so hover (bg/border/shadow) keeps its snappy transition while the
+   opacity/transform enter runs at 0.3s. */
+#page-wifi .wifi-item.wifi-item-enter { opacity: 0; transform: translateY(10px); }
+#page-wifi .wifi-item.wifi-item-enter.wifi-item-visible {
+    opacity: 1; transform: none;
+    transition: var(--transition-fast), opacity 0.3s ease, transform 0.3s ease;
+}
+
 #page-wifi .wifi-info { display: flex; align-items: center; gap: var(--spacing-sm); width: 100%; }
 #page-wifi .wifi-icon { width: 20px; height: 20px; color: var(--color-text-muted); flex-shrink: 0; }
+#page-wifi .wifi-item .wifi-main { flex: 1; min-width: 0; }
+#page-wifi .wifi-item .wifi-name-row { display: flex; align-items: center; gap: var(--spacing-sm); }
 #page-wifi .wifi-name { font-size: 14px; font-weight: 600; color: var(--color-text); }
 #page-wifi .wifi-strength { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
-#page-wifi .wifi-encryption { font-size: 12px; color: var(--color-text-muted); margin-left: var(--spacing-xs); }
+#page-wifi .wifi-item .wifi-right { display: flex; align-items: center; gap: var(--spacing-sm); flex-shrink: 0; }
 
 #page-wifi .connected-badge {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 8px; margin-left: var(--spacing-xs);
+    display: inline-flex; align-items: center; gap: var(--spacing-2xs);
+    padding: var(--spacing-2xs) var(--spacing-sm); margin-left: var(--spacing-xs);
     background: rgba(22, 163, 74, 0.10);
-    color: #15803D;
+    color: var(--color-success-hover);
     border-radius: var(--radius-full);
     font-size: 11px; font-weight: 600;
 }
@@ -118,9 +335,25 @@
 #page-wifi .encryption-icon { display: flex; align-items: center; color: var(--color-text-muted); flex-shrink: 0; }
 #page-wifi .encryption-icon svg { width: 14px; height: 14px; }
 
-/* config form */
-#page-wifi .wifi-config-section { margin: var(--spacing-lg) 0; text-align: left; }
-#page-wifi .wifi-config-section h3 { margin-bottom: var(--spacing-md); }
+/* --- Config form --- */
+#page-wifi .selected-network {
+    display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+#page-wifi .selected-network-label {
+    font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+}
+/* the chosen SSID reads as a distinct accent chip (JS writes #selectedSSID) */
+#page-wifi .ssid-chip {
+    display: inline-flex; align-items: center;
+    padding: var(--spacing-2xs) var(--spacing-sm);
+    background: var(--color-primary-light);
+    color: var(--color-primary-hover);
+    border-radius: var(--radius-full);
+    font-family: var(--font-heading); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.02em;
+    word-break: break-all;
+}
 
 #page-wifi .password-wrapper { position: relative; display: flex; align-items: center; }
 #page-wifi .wifi-password { padding-right: 44px; }   /* room for the eye toggle */
@@ -138,7 +371,7 @@
     transition: var(--transition-fast);
 }
 #page-wifi .password-toggle:hover { color: var(--color-text); background: var(--color-bg-hover); }
-#page-wifi .password-toggle:focus-visible { outline: 2px solid var(--color-primary-light); outline-offset: 1px; }
+#page-wifi .password-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 #page-wifi .password-toggle svg { width: 18px; height: 18px; }
 
 #page-wifi .error-hint { margin-top: var(--spacing-xs); color: var(--color-danger-hover); font-size: 12px; display: none; }
@@ -147,9 +380,19 @@
 #page-wifi .wifi-actions-row { display: flex; gap: var(--spacing-sm); margin-top: var(--spacing-md); }
 #page-wifi .wifi-actions-row .btn { flex: 1; }
 
-#page-wifi .wifi-danger-section { margin-top: var(--spacing-xl); }
-#page-wifi .wifi-clear-btn { width: 100%; }
-#page-wifi .wifi-back-link { width: 100%; justify-content: center; margin-top: var(--spacing-md); }
+/* --- Danger zone (secondary destructive; de-emphasized) ---
+   A small ghost control that only turns danger on hover, visually
+   subordinate to the primary connect flow above it. */
+#page-wifi .wifi-danger-row { margin-top: var(--spacing-xl); text-align: center; }
+#page-wifi .wifi-clear-btn {
+    color: var(--color-text-muted);
+    border-color: var(--color-border-light);
+}
+#page-wifi .wifi-clear-btn:hover {
+    color: var(--color-danger-hover);
+    background: var(--color-danger-light);
+    border-color: var(--color-danger);
+}
 
 /* scan in-progress — quiet spinner reusing the `spin` keyframe
    (replaces the old radarPulse rings) */
@@ -158,45 +401,6 @@
 #page-wifi .radar-animation { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0 auto var(--spacing-sm); }
 #page-wifi .radar-animation svg { width: 32px; height: 32px; color: var(--color-primary-hover); animation: spin 1.2s linear infinite; }
 
-/* connection-test progress UI (defensive — rendered only if JS builds it).
-   No new keyframes: the ring is static, steps convey state via color. */
-#page-wifi .connection-progress {
-    margin-top: var(--spacing-md); padding: var(--spacing-lg);
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-md);
-    display: flex; flex-direction: column; align-items: center; gap: var(--spacing-md);
-}
-#page-wifi .progress-ring { position: relative; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; }
-#page-wifi .progress-ring-svg { transform: rotate(-90deg); }
-#page-wifi .progress-ring-bg { stroke: var(--color-border); fill: none; }
-#page-wifi .progress-ring-circle { stroke: var(--color-primary); fill: none; stroke-linecap: round; transition: stroke-dashoffset 0.3s ease; }
-#page-wifi .progress-icon { position: absolute; color: var(--color-primary); display: flex; align-items: center; justify-content: center; }
-#page-wifi .progress-icon svg { width: 24px; height: 24px; }
-#page-wifi .progress-icon.success { color: var(--color-success); }
-#page-wifi .progress-icon.error { color: var(--color-danger); }
-#page-wifi .progress-steps { display: flex; align-items: center; justify-content: center; gap: var(--spacing-md); width: 100%; }
-#page-wifi .progress-step { display: flex; flex-direction: column; align-items: center; gap: var(--spacing-xs); opacity: 0.45; transition: opacity 0.2s ease; }
-#page-wifi .progress-step.active { opacity: 1; }
-#page-wifi .progress-step.completed { opacity: 0.8; }
-#page-wifi .step-icon {
-    width: 28px; height: 28px; border-radius: var(--radius-full);
-    background: var(--color-border); color: var(--color-text-secondary);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 600;
-}
-#page-wifi .progress-step.active .step-icon { background: var(--color-primary); color: #fff; }
-#page-wifi .progress-step.completed .step-icon { background: var(--color-success); color: #fff; }
-#page-wifi .step-text { font-size: 12px; color: var(--color-text-muted); }
-#page-wifi .progress-step.active .step-text { color: var(--color-primary-hover); font-weight: 600; }
-#page-wifi .progress-status {
-    text-align: center; font-size: 13px; color: var(--color-text-secondary);
-    padding: var(--spacing-xs) var(--spacing-md); border-radius: var(--radius-sm);
-    background: var(--color-bg-hover);
-}
-#page-wifi .progress-status.success { color: var(--color-success); }
-#page-wifi .progress-status.error { color: var(--color-danger); }
-
 /* ============================================================
    #page-files
    Base .upload-area / .upload-content / .file-info / .upload-progress* /
@@ -204,29 +408,24 @@
    style.css. Rules below cover the page-specific aliases only.
    ============================================================ */
 
-/* upload stack + dropzone caption glyph (alias markup) */
+/* upload stack + dropzone caption (alias markup).
+   Phase 4 trim: .upload-icon had 0 refs (removed); .upload-text kept. */
 #page-files .upload-wrapper { display: flex; flex-direction: column; gap: var(--spacing-md); }
-#page-files .upload-icon { width: 40px; height: 40px; color: var(--color-primary-hover); }
 #page-files .upload-text { font-size: 14px; color: var(--color-text-muted); margin: 0; }
 
-/* selected-file summary (alias markup) */
-#page-files .file-info-icon { width: 40px; height: 40px; color: var(--color-primary-hover); }
-#page-files .file-info-details { display: flex; flex-direction: column; gap: var(--spacing-xs); text-align: center; }
+/* selected-file summary (alias markup).
+   Phase 4 trim: .file-info-icon / .file-info-details had 0 refs (removed);
+   .file-name / .file-size kept (used by files.html). */
 #page-files .file-name { font-family: var(--font-heading); font-size: 13px; font-weight: 600; color: var(--color-text); word-break: break-all; }
 #page-files .file-size { font-family: var(--font-heading); font-size: 12px; color: var(--color-text-muted); }
-
-/* upload progress block (alias markup; current HTML uses .upload-progress from style.css) */
-#page-files .upload-progress-wrapper { display: none; flex-direction: column; gap: var(--spacing-xs); }
-#page-files .upload-progress-wrapper.active { display: flex; }
-#page-files .upload-progress-container { position: relative; width: 100%; height: 20px; background: var(--color-border); border-radius: var(--radius-full); overflow: hidden; }
-#page-files .upload-status-text { font-size: 12px; color: var(--color-text-muted); text-align: right; font-family: var(--font-heading); }
 
 /* ============================================================
    #page-cards
    ============================================================ */
 
-/* section variants — flat. primary = base white card; secondary = inset Slate-50 well */
-#page-cards .section.primary { padding: var(--spacing-lg); }
+/* section variants — flat. primary = base white card (no override needed;
+   padding var(--spacing-lg) matches base .section — trimmed Phase 4);
+   secondary = inset Slate-50 well. */
 #page-cards .section.secondary {
     background: var(--color-bg-elevated);
     border-color: var(--color-border-light);
@@ -235,10 +434,18 @@
 }
 #page-cards .section.secondary h3 { font-size: 14px; font-weight: 600; color: var(--color-text-secondary); }
 
+/* primary section rhythm: reader-status row · add-card form · add button
+   read as three clean beats rather than a uniform stack. The gradient <hr>
+   (style.css) separates the reader beat from the form; tighter field
+   spacing keeps UID + name as one compact block, and the full-width add
+   button closes the form with a clear affordance. */
+#page-cards .section.primary .input-group { margin: var(--spacing-sm) 0; }
+#page-cards .section.primary > .btn { width: 100%; margin-top: var(--spacing-sm); }
+
 /* card logic toggle */
 #page-cards .toggle-container { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-md); padding: var(--spacing-xs) 0; }
 #page-cards .toggle-label { font-size: 15px; font-weight: 600; color: var(--color-text); }
-#page-cards .toggle-hint { margin-top: var(--spacing-sm); font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
+.toggle-hint { margin-top: var(--spacing-sm); font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
 #page-cards .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
 #page-cards .toggle-switch input { opacity: 0; width: 0; height: 0; }
 #page-cards .toggle-slider {
@@ -256,7 +463,7 @@
 }
 #page-cards .toggle-switch input:checked + .toggle-slider { background: var(--color-primary); }
 #page-cards .toggle-switch input:checked + .toggle-slider::before { transform: translateX(22px); }
-#page-cards .toggle-switch input:focus-visible + .toggle-slider { box-shadow: 0 0 0 3px var(--color-primary-light); }
+#page-cards .toggle-switch input:focus-visible + .toggle-slider { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
 /* reader + read button row */
 #page-cards .card-reader-container { display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap; }
@@ -278,11 +485,16 @@
 #page-cards .reader-status.reading { border-color: rgba(217, 119, 6, 0.3); background: rgba(217, 119, 6, 0.06); }
 #page-cards .reader-status.reading .status-indicator { background: var(--color-warning); }
 #page-cards .reader-status.reading .status-text,
-#page-cards .reader-status.reading > span { color: #B45309; }
+#page-cards .reader-status.reading > span { color: var(--color-warning-hover); }
+/* read button loader arc spins while a read is in progress.
+   .reader-status.reading is the canonical in-progress signal;
+   the read button is its following sibling in the reader row.
+   Reuses the global `spin` keyframe (zeroed by prefers-reduced-motion). */
+#page-cards .reader-status.reading ~ .btn svg { animation: spin 1s linear infinite; }
 #page-cards .reader-status.success { border-color: rgba(22, 163, 74, 0.3); background: rgba(22, 163, 74, 0.06); }
 #page-cards .reader-status.success .status-indicator { background: var(--color-success); }
 #page-cards .reader-status.success .status-text,
-#page-cards .reader-status.success > span { color: #15803D; font-weight: 600; }
+#page-cards .reader-status.success > span { color: var(--color-success-hover); font-weight: 600; }
 #page-cards .reader-status.error { border-color: rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.06); }
 #page-cards .reader-status.error .status-indicator { background: var(--color-danger); }
 #page-cards .reader-status.error .status-text,
@@ -292,7 +504,7 @@
 #page-cards .card-info {
     width: 100%; padding: var(--spacing-sm) var(--spacing-md);
     background: var(--color-primary-light);
-    border: 1px solid rgba(8, 145, 178, 0.2);
+    border: 1px solid rgba(14, 116, 144, 0.2);
     border-radius: var(--radius-sm);
     margin-top: var(--spacing-sm);
     text-align: left;
@@ -311,19 +523,32 @@
     border-radius: var(--radius-sm);
     transition: var(--transition-fast);
 }
-#page-cards .card-item:hover { background: var(--color-bg-hover); border-left-color: var(--color-primary); }
+#page-cards .card-item:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); border-left-color: var(--color-primary); box-shadow: var(--shadow-sm); }
 #page-cards .card-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #page-cards .card-uid { font-family: var(--font-heading); font-size: 14px; font-weight: 600; color: var(--color-text); letter-spacing: 0.03em; word-break: break-all; }
 #page-cards .card-name { font-size: 13px; color: var(--color-text-muted); }
 
-/* compact destructive icon button (markup: .btn-icon.btn-danger) */
+/* compact destructive icon button — unified with the files page's
+   .item .actions .btn-sm.btn-delete tile: transparent by default, muted
+   glyph, danger color surfaces ONLY on hover (semantic color = state).
+   Markup: .btn-icon.btn-delete (.btn-icon kept so deleteCard()'s
+   querySelector('.card-item .btn-icon') still resolves). */
 #page-cards .card-item .btn-icon {
     flex-shrink: 0;
     width: 32px; height: 32px; padding: 0; min-height: unset;
     border-radius: var(--radius-sm);
-    display: flex; align-items: center; justify-content: center;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
 }
 #page-cards .card-item .btn-icon svg { width: 16px; height: 16px; }
+#page-cards .card-item .btn-icon:hover { background: var(--color-danger-light); border-color: var(--color-danger); color: var(--color-danger-hover); }
+#page-cards .card-item .btn-icon:active { transform: scale(0.98); }   /* signature 跟手 press */
+#page-cards .card-item .btn-icon:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
 #page-cards .empty-state {
     text-align: center; padding: var(--spacing-xl) var(--spacing-md);
@@ -335,22 +560,53 @@
 #page-cards .empty-state svg { width: 40px; height: 40px; margin-bottom: var(--spacing-sm); }
 #page-cards .empty-state p { margin: 0; font-size: 14px; }
 
-#page-cards .input-hint { display: block; margin-top: var(--spacing-xs); color: var(--color-text-muted); font-size: 13px; }
-#page-cards hr { border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-lg) 0; }
-#page-cards .back-to-home { text-align: center; margin-top: var(--spacing-xl); }
+.input-hint { display: block; margin-top: var(--spacing-xs); color: var(--color-text-muted); font-size: 13px; }
+/* Phase 4 trim: #page-cards hr and #page-cards .back-to-home were redundant with
+   global hr / .back-to-home in style.css. */
 
 /* ============================================================
    #page-servo
    ============================================================ */
-#page-servo .servo-position-control { margin-bottom: var(--spacing-lg); }
+/* h4 sub-groups read as segmented divider-labels: a tracked accent label
+   with a leading dot and a trailing hairline. The plain <hr> separators
+   were removed from servo.html, so each sub-group is now demarcated by
+   its own h4 instead of a double line — cleaner, tighter separation
+   between the live-test group and the config group. */
+#page-servo .section h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin: var(--spacing-lg) 0 var(--spacing-md);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--color-primary-hover);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+#page-servo .section h4::before {
+    content: '';
+    flex-shrink: 0;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--color-primary);
+}
+#page-servo .section h4::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+}
+/* slightly tighter control rhythm (was --spacing-lg) so the three control
+   blocks and the test caption breathe as one compact group. */
+#page-servo .servo-position-control { margin-bottom: var(--spacing-md); }
 #page-servo .position-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-sm); }
 #page-servo .position-header label { font-size: 14px; font-weight: 600; color: var(--color-text); }
 #page-servo .position-percent {
     font-family: var(--font-heading); font-size: 13px; font-weight: 600;
     color: var(--color-primary-hover);
-    padding: 2px 10px;
+    padding: var(--spacing-2xs) var(--spacing-sm);
     background: var(--color-primary-light);
-    border: 1px solid rgba(8, 145, 178, 0.15);
+    border: 1px solid rgba(14, 116, 144, 0.15);
     border-radius: var(--radius-sm);
     min-width: 48px; text-align: center;
 }
@@ -380,19 +636,22 @@
 }
 #page-servo .slider:hover::-webkit-slider-thumb { background: var(--color-primary-hover); }
 #page-servo .slider:hover::-moz-range-thumb { background: var(--color-primary-hover); }
+/* range-input exception: the thumb is the affordance, not the track,
+   so focus the thumb with a halo rather than ringing the track box.
+   (Canonical outline is the default; range inputs are the sanctioned exception.) */
 #page-servo .slider:focus-visible { outline: none; }
 #page-servo .slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--color-primary-light); }
 #page-servo .slider:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--color-primary-light); }
 
 #page-servo .position-input {
-    width: 90px; padding: 8px 10px;
+    width: 90px; padding: var(--spacing-sm);
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     background: var(--color-bg-card); color: var(--color-text);
     font-family: var(--font-heading); font-size: 14px; font-weight: 600;
     text-align: center;
     transition: var(--transition-fast);
 }
-#page-servo .position-input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-light); }
+#page-servo .position-input:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; border-color: var(--color-primary); }
 
 /* ============================================================
    #page-ota
@@ -414,6 +673,18 @@
     content: ''; position: absolute; left: 4px; top: 9px;
     width: 5px; height: 5px; border-radius: 50%;
     background: var(--color-primary);
+}
+
+/* in-progress captions directly under the upload progress bar
+   (#progressStage status line + the explanatory sibling). Page-scoped:
+   files/wifi each own their own progress-caption class, so this stays
+   an ota concern and cannot leak. */
+#page-ota .progress-hint {
+    text-align: center;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    line-height: 1.5;
+    margin: var(--spacing-sm) 0 0;
 }
 
 /* ============================================================
@@ -443,6 +714,13 @@
 }
 
 @media (max-width: 480px) {
+    /* home: keep status tiles side-by-side but tighten padding so SSID/IP
+       breathe on narrow phones; soften the hero a touch. */
+    #page-index .hero { padding: var(--spacing-md); }
+    #page-index .status-tiles { gap: var(--spacing-sm); }
+    #page-index .status-tile { padding: var(--spacing-sm); }
+    #page-index .status-tile .tile-icon { width: 32px; height: 32px; }
+
     #page-cards .reader-status { padding: var(--spacing-sm) var(--spacing-md); }
     #page-cards .card-info .info-value { font-size: 14px; }
     #page-cards .toggle-container { flex-direction: column; align-items: flex-start; gap: var(--spacing-sm); }

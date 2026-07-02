@@ -23,22 +23,28 @@
     function getWifiStatus() {
         sendWsRequest('wifi/getInfo')
             .then(data => {
+                const banner = document.getElementById('wifiStatusBanner');
                 const statusDot = document.getElementById('wifiStatusDot');
                 const statusText = document.getElementById('wifiStatusText');
-                
+                let stateClass = 'state-muted';
+
                 if (data.mode === 'AP') {
-                    statusDot.className = 'status-dot connected';
+                    stateClass = 'state-warning';
                     statusText.textContent = 'AP模式: ' + data.ssid;
                     isAPMode = true;
                 } else if (data.ssid) {
-                    statusDot.className = 'status-dot connected';
+                    stateClass = 'state-success';
                     statusText.textContent = '已连接: ' + data.ssid + ' (' + data.ip + ')';
                     isAPMode = false;
                 } else {
-                    statusDot.className = 'status-dot';
                     statusText.textContent = '未连接';
                     isAPMode = false;
                 }
+
+                // 语义状态由 banner 承载（success/warning/muted），
+                // 驱动左边框、图标、标签和圆点颜色；圆点交由 CSS 着色。
+                banner.className = 'wifi-status-banner ' + stateClass;
+                statusDot.className = 'status-dot';
             })
             .catch(error => {
                 console.error('获取WiFi状态失败:', error);
@@ -85,7 +91,7 @@
         // 禁用扫描按钮
         scanBtn.disabled = true;
         scanBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
                 <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
                 <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
@@ -102,7 +108,7 @@
             offWsEvent('wifi/scanResult', scanResultHandler);
             scanBtn.disabled = false;
             scanBtn.innerHTML = `
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
                     <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
                     <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
@@ -111,10 +117,10 @@
                 扫描WiFi网络
             `;
             wifiList.innerHTML = `
-                <p style="text-align: center; color: var(--color-danger);">扫描超时</p>
-                <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
-                    重新扫描
-                </button>
+                <p class="empty">扫描超时</p>
+                <div class="wifi-result-actions">
+                    <button onclick="scanWifi()" class="btn btn-sm">重新扫描</button>
+                </div>
             `;
             showToast('扫描超时，请重试', 'error');
         }, 35000);
@@ -129,10 +135,10 @@
             } else {
                 const errorMessage = message.data?.message || '未找到WiFi网络';
                 wifiList.innerHTML = `
-                    <p style="text-align: center; color: var(--color-text-secondary);">${escapeHtml(errorMessage)}</p>
-                    <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
-                        重新扫描
-                    </button>
+                    <p class="empty">${escapeHtml(errorMessage)}</p>
+                    <div class="wifi-result-actions">
+                        <button onclick="scanWifi()" class="btn btn-sm">重新扫描</button>
+                    </div>
                 `;
                 if (errorMessage !== '未找到WiFi网络') {
                     showToast('扫描失败：' + errorMessage, 'error');
@@ -149,10 +155,10 @@
                 offWsEvent('wifi/scanResult', scanResultHandler);
                 console.error('扫描WiFi失败:', error);
                 wifiList.innerHTML = `
-                    <p style="text-align: center; color: var(--color-danger);">扫描失败</p>
-                    <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
-                        重新扫描
-                    </button>
+                    <p class="empty">扫描失败</p>
+                    <div class="wifi-result-actions">
+                        <button onclick="scanWifi()" class="btn btn-sm">重新扫描</button>
+                    </div>
                 `;
                 showToast('扫描失败：' + error.message, 'error');
             })
@@ -160,7 +166,7 @@
                 // 恢复扫描按钮
                 scanBtn.disabled = false;
                 scanBtn.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
                         <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
                         <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
@@ -180,10 +186,10 @@
         if (!Array.isArray(networks)) {
             console.error('networks 不是数组:', networks);
             wifiList.innerHTML = `
-                <p style="text-align: center; color: var(--color-danger);">扫描结果格式错误</p>
-                <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
-                    重新扫描
-                </button>
+                <p class="empty">扫描结果格式错误</p>
+                <div class="wifi-result-actions">
+                    <button onclick="scanWifi()" class="btn btn-sm">重新扫描</button>
+                </div>
             `;
             showToast('扫描结果格式错误', 'error');
             return;
@@ -191,10 +197,10 @@
         
         if (networks.length === 0) {
             wifiList.innerHTML = `
-                <p style="text-align: center; color: var(--color-text-secondary);">未找到WiFi网络</p>
-                <button onclick="scanWifi()" class="btn btn-primary" style="margin-top: var(--spacing-sm); font-size: 14px; padding: 10px 20px;">
-                    重新扫描
-                </button>
+                <p class="empty">未找到WiFi网络</p>
+                <div class="wifi-result-actions">
+                    <button onclick="scanWifi()" class="btn btn-sm">重新扫描</button>
+                </div>
             `;
             return;
         }
@@ -204,10 +210,7 @@
         
         // 添加扫描结果提示
         const countInfo = document.createElement('p');
-        countInfo.style.textAlign = 'center';
-        countInfo.style.color = 'var(--color-text-muted)';
-        countInfo.style.fontSize = '13px';
-        countInfo.style.marginBottom = 'var(--spacing-sm)';
+        countInfo.className = 'wifi-count';
         countInfo.textContent = `找到 ${networks.length} 个WiFi网络`;
         wifiList.appendChild(countInfo);
         
@@ -220,13 +223,10 @@
             const encryptionText = getEncryptionText(network.encryption);
             const signalLevel = getSignalLevel(network.rssi);
             
-            // 添加延迟动画
-            div.style.opacity = '0';
-            div.style.transform = 'translateY(10px)';
+            // 添加延迟动画（通过类切换，无内联样式；时序 index*50 保持不变）
+            div.classList.add('wifi-item-enter');
             setTimeout(() => {
-                div.style.transition = 'opacity 0.3s, transform 0.3s';
-                div.style.opacity = '1';
-                div.style.transform = 'translateY(0)';
+                div.classList.add('wifi-item-visible');
             }, index * 50);
             
             // 检查是否是当前连接的网络
@@ -241,8 +241,8 @@
                         <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
                         <line x1="12" y1="20" x2="12.01" y2="20"></line>
                     </svg>
-                    <div style="flex: 1;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                    <div class="wifi-main">
+                        <div class="wifi-name-row">
                             <span class="wifi-name">${escapeHtml(network.ssid)}</span>
                             ${isConnected ? `
                                 <span class="connected-badge">
@@ -253,7 +253,7 @@
                         </div>
                         <div class="wifi-strength">信号: ${signalStrength} (${network.rssi} dBm)</div>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="wifi-right">
                         <div class="signal-icon signal-${signalLevel}" title="信号强度: ${signalStrength}">
                             <div class="signal-bar"></div>
                             <div class="signal-bar"></div>

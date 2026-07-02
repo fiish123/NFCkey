@@ -158,116 +158,44 @@ bool isCardAuthorized(const NFCcard &currentCard)
 // 读卡函数
 NFCcard ReadCard()
 {
-    uint8_t rxBuffer[20];      // 缓冲区
-    uint8_t bufferIndex = 0;   // 缓冲索引
-    bool frameStarted = false; // 接收标志
-    unsigned long frameStartTime = 0;
-    unsigned long lastReceiveTime = 0;
-    const unsigned long TIMEOUT_MS = 100; // 超时时长
+    NFCcard card;
+    card.uidLength = 0;               // 默认为无效
 
-    NFCcard readdata;
-    readdata.uidLength = 0; // 初始化为无效状态
+    // 1. 一次性读取所有可用字节（最多 128 字节，避免占用过大栈空间）
+    uint8_t buf[128];
+    int avail = Serial1.available();
+    if (avail <= 0)
+        return card;                  // 无数据，直接返回
 
-    while (1)
+    int len = (avail > (int)sizeof(buf)) ? (int)sizeof(buf) : avail;
+    for (int i = 0; i < len; i++)
+        buf[i] = Serial1.read();
+
+    // 2. 在数据中搜索完整帧：起始 0x20，结束 0x03，共 14 字节
+    for (int i = 0; i <= len - 14; i++)
     {
-        if (Serial1.available() <= 0)
+        if (buf[i] == 0x20 && buf[i + 13] == 0x03)
         {
-            if (frameStarted && (millis() - lastReceiveTime > TIMEOUT_MS))
+            // 校验和：对索引 1~11 异或后取反
+            uint8_t checksum = 0;
+            for (int j = 1; j <= 11; j++)
+                checksum ^= buf[i + j];
+            checksum = ~checksum;
+
+            if (checksum == buf[i + 12])
             {
-                LOG_W("NFC数据帧接收超时: 已接收=%u字节, 持续=%lu ms", bufferIndex, millis() - frameStartTime);
-                frameStarted = false;
-                bufferIndex = 0;
-                readdata.uidLength = 0;
-                return readdata;
-            }
-
-            if (!frameStarted)
-            {
-                break;
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(1));
-            continue;
-        }
-
-        uint8_t incomingByte = Serial1.read();
-        lastReceiveTime = millis(); // 更新最后接收时间
-
-        // 寻找帧起始符 0x20
-        if (!frameStarted && incomingByte == 0x20)
-        {
-
-            frameStarted = true;
-            bufferIndex = 0;
-            rxBuffer[bufferIndex++] = incomingByte;
-            frameStartTime = lastReceiveTime;
-            lastReceiveTime = millis(); // 开始接收时记录时间
-        }
-        // 如果已经开始接收帧
-        else if (frameStarted)
-        {
-            rxBuffer[bufferIndex++] = incomingByte;
-
-            // 检查是否收到完整的帧 (14字节)
-            if (bufferIndex >= 14)
-            {
-
-                // 检查帧结构是否正确 (起始符和结束符)
-                if (rxBuffer[0] != 0x20 || rxBuffer[13] != 0x03)
-                {
-
-                    LOG_W("NFC数据帧格式错误: 起始=0x%X, 结束=0x%X", rxBuffer[0], rxBuffer[13]);
-
-                    frameStarted = false;
-                    bufferIndex = 0;
-                    readdata.uidLength = 0;
-                    return readdata;
-                }
-
-                // 计算校验和验证数据完整性
-                uint8_t checksum = 0;
-                for (int i = 1; i <= 11; i++)
-                {
-                    checksum ^= rxBuffer[i];
-                }
-                checksum = ~checksum;
-
-                if (checksum != rxBuffer[12])
-                {
-                    LOG_W("NFC数据帧校验失败");
-                    frameStarted = false;
-                    bufferIndex = 0;
-                    readdata.uidLength = 0;
-                    return readdata;
-                }
-
-                // 提取序列号 (第9-12字节)
-                readdata.uidLength = 4;
-                readdata.uid[0] = rxBuffer[8];
-                readdata.uid[1] = rxBuffer[9];
-                readdata.uid[2] = rxBuffer[10];
-                readdata.uid[3] = rxBuffer[11];
-
-                frameStarted = false;
-                bufferIndex = 0;
-                return readdata;
-            }
-
-            // 防止缓冲区溢出
-            if (bufferIndex >= sizeof(rxBuffer))
-            {
-                LOG_W("NFC接收缓冲区溢出，重置接收状态");
-                frameStarted = false;
-                bufferIndex = 0;
-                readdata.uidLength = 0;
-                return readdata;
+                // 提取 4 字节 UID（第 9~12 字节，即索引 8~11）
+                card.uidLength = 4;
+                card.uid[0] = buf[i + 8];
+                card.uid[1] = buf[i + 9];
+                card.uid[2] = buf[i + 10];
+                card.uid[3] = buf[i + 11];
+                return card;          // 返回第一个有效的卡数据
             }
         }
     }
 
-    // 没有读取到完整数据时返回空数据
-    readdata.uidLength = 0;
-    return readdata;
+    return card;  // 未找到有效帧
 }
 
 // 读卡指令

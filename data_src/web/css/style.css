@@ -29,6 +29,7 @@ input, select, textarea { font: inherit; }
     --color-danger-hover: #B91C1C;
     --color-danger-light: rgba(220, 38, 38, 0.08);
     --color-warning: #D97706;
+    --color-warning-hover: #B45309;
 
     /* text — Tailwind Slate */
     --color-text: #0F172A;                   /* Slate 900 */
@@ -46,10 +47,22 @@ input, select, textarea { font: inherit; }
     --color-border-light: #F1F5F9;           /* Slate 100 (faint) */
     --color-border-hover: #CBD5E1;           /* Slate 300 (interaction) */
 
-    /* shadows — one soft layer each, no glow */
-    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-    --shadow-md: 0 2px 6px rgba(15, 23, 42, 0.06);
-    --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.10);
+    /* shadows — three explicit elevation tiers (clean polish, not flat stark).
+       Negative spread = crisp edges; never colored/blur halos (no glow).
+         page tier → .container, dialogs, toasts, log window   (shadow-lg)
+         card tier → .section                                   (shadow-md + hairline)
+         row  tier → .item / .card-item / .wifi-item            (hairline; hover lifts via shadow-sm) */
+    --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.06);
+    --shadow-md: 0 2px 4px -1px rgba(15, 23, 42, 0.07), 0 1px 2px -1px rgba(15, 23, 42, 0.05);
+    --shadow-lg: 0 8px 24px -6px rgba(15, 23, 42, 0.10), 0 3px 8px -4px rgba(15, 23, 42, 0.06);
+
+    /* hero — the ONE sanctioned gradient + a single soft accent glow.
+       Reserved for the home hero banner (and a quiet echo on primary-CTA
+       hover). Relaxes the old "no gradient / no glow" rule in exactly the
+       high-value spots where it earns its place; every other surface stays
+       flat so the accent remains meaningful. */
+    --hero-gradient: linear-gradient(135deg, #155E75 0%, #0E7490 45%, #0891B2 100%);
+    --shadow-glow-accent: 0 12px 28px -10px rgba(14, 116, 144, 0.55);
 
     /* radii */
     --radius-sm: 6px;
@@ -57,16 +70,19 @@ input, select, textarea { font: inherit; }
     --radius-lg: 14px;
     --radius-full: 9999px;
 
-    /* spacing — 4/8/16/24/32 */
+    /* spacing — 4px grid; 2xs added so ad-hoc 2px gaps snap to scale.
+       Component paddings must use these tokens, not magic px. */
+    --spacing-2xs: 2px;
     --spacing-xs: 4px;
     --spacing-sm: 8px;
     --spacing-md: 16px;
     --spacing-lg: 24px;
     --spacing-xl: 32px;
 
-    /* motion */
-    --transition-fast: all 0.15s ease;
-    --transition-base: all 0.2s ease;
+    /* motion — snappier ease for a "跟手" feel. One signature micro-motion
+       lives on .btn (:active scale 0.98); no motion library, no new keyframes. */
+    --transition-fast: all 0.14s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 
     /* fonts — system stacks only (offline) */
     --font-heading: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -76,6 +92,9 @@ input, select, textarea { font: inherit; }
 /* ===== Base typography ===== */
 body {
     font-family: var(--font-body);
+    /* LINT: page shell is center-default by convention (centered hero h1,
+       centered empty/back-link states). Every text-bearing component MUST
+       set its own text-align; do NOT rely on this inherited center. */
     text-align: center;
     min-height: 100vh;
     background: var(--color-bg-elevated);
@@ -85,14 +104,19 @@ body {
     padding: var(--spacing-xl) var(--spacing-md);
 }
 
-h1 { font-size: 28px; font-weight: 700; color: var(--color-text); line-height: 1.25; letter-spacing: -0.01em; margin: 0 0 var(--spacing-lg); }
-h2 { font-size: 18px; font-weight: 600; color: var(--color-text); line-height: 1.35; margin: 0 0 var(--spacing-md); }
+h1 { font-size: 32px; font-weight: 700; color: var(--color-text); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 var(--spacing-lg); }
+h2 { font-size: 20px; font-weight: 600; color: var(--color-text); line-height: 1.3; letter-spacing: -0.01em; margin: 0 0 var(--spacing-md); }
 h3 { font-size: 16px; font-weight: 600; color: var(--color-text); line-height: 1.4; margin: 0 0 var(--spacing-sm); }
-h4 { font-size: 15px; font-weight: 600; color: var(--color-text); margin: 0 0 var(--spacing-sm); }
+/* h4 = subdued sub-section label, subordinate to h3 (500/muted, not 600/secondary). */
+h4 { font-size: 14px; font-weight: 500; color: var(--color-text-muted); line-height: 1.4; margin: 0 0 var(--spacing-sm); }
 p  { margin: 0 0 var(--spacing-sm); }
 
 a { color: var(--color-primary-hover); text-decoration: none; transition: var(--transition-fast); }
 a:hover { text-decoration: underline; }
+/* hr = intentional divider, not a default border. Soft fade at the edges so
+   it reads as a structured break inside a card (servo/cards sub-groups) rather
+   than a stray hairline. No animation — stays out of reduced-motion concerns. */
+hr { border: none; height: 1px; margin: var(--spacing-lg) 0; background: linear-gradient(90deg, transparent, var(--color-border) 12%, var(--color-border) 88%, transparent); }
 
 /* ===== Layout primitives ===== */
 .container {
@@ -100,11 +124,16 @@ a:hover { text-decoration: underline; }
     margin: 0 auto;
     background: var(--color-bg-card);
     padding: var(--spacing-xl);
-    border: 1px solid var(--color-border-light);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);   /* page tier */
 }
 .container.narrow { max-width: 640px; }
+
+/* .is-hidden = initial-hide for elements JS reveals via inline style.display
+   (e.g. #fileInfo / #file). Inline display from JS always wins; this owns the
+   pre-JS state. Use INSTEAD of inline style="display:none" in authored HTML. */
+.is-hidden { display: none; }
 
 /* ===== Section card ===== */
 .section {
@@ -113,10 +142,28 @@ a:hover { text-decoration: underline; }
     background: var(--color-bg-card);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);   /* card tier: floats above the page shell */
+    text-align: left;               /* LINT: explicit — sections read left-to-right */
 }
-.section h2 { display: flex; align-items: center; gap: var(--spacing-sm); }
-.section h2 svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+/* Section header anchor — a short accent bar to the left of every .section h3.
+   Global so all 6 pages get a consistent visual anchor for free; padding-left
+   reserves the slot and ::before paints the bar. Additive: margins/IDs inside
+   h3 (e.g. #selectedSSID, #cardCount) are unaffected. */
+.section h3 {
+    position: relative;
+    padding-left: var(--spacing-md);
+}
+.section h3::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 4px;
+    bottom: 4px;
+    width: 3px;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+}
 
 /* ===== System info / info rows ===== */
 .system-info {
@@ -157,7 +204,7 @@ a:hover { text-decoration: underline; }
 .input-group input[type="password"],
 .input-group input[type="search"] {
     width: 100%;
-    padding: 10px 14px;
+    padding: var(--spacing-sm) var(--spacing-md);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-bg-card);
@@ -166,7 +213,8 @@ a:hover { text-decoration: underline; }
     font-size: 15px;
     transition: var(--transition-fast);
 }
-.input-group input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-light); }
+.input-group input:hover { border-color: var(--color-border-hover); }
+.input-group input:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; border-color: var(--color-primary); }
 .input-group input::placeholder { color: var(--color-text-muted); }
 
 /* ===== Buttons — 3-role model (primary / secondary / danger) ===== */
@@ -177,7 +225,7 @@ a:hover { text-decoration: underline; }
     align-items: center;
     justify-content: center;
     gap: var(--spacing-sm);
-    padding: 12px 22px;
+    padding: var(--spacing-sm) var(--spacing-lg);
     min-height: 48px;
     font-family: var(--font-body);
     font-size: 15px;
@@ -192,23 +240,24 @@ a:hover { text-decoration: underline; }
     user-select: none;
     transition: var(--transition-fast);
     position: relative;
+    -webkit-tap-highlight-color: transparent;
 }
 .btn svg { width: 18px; height: 18px; flex-shrink: 0; }
 .btn:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); color: var(--color-text); }
-.btn:active { background: var(--color-bg-elevated); }
-.btn:focus-visible { outline: 3px solid var(--color-primary-light); outline-offset: 1px; }
+/* signature micro-motion: press = subtle scale (跟手). Base active bg targets
+   ghost buttons; solid roles override below to KEEP their fill on press
+   (fixes a prior specificity bug where :active flashed solid buttons gray). */
+.btn:active { background: var(--color-bg-hover); transform: scale(0.98); }
+.btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 
 /* primary — solid accent hero CTA (≤1 per page) */
 .btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); color: #fff; }
 
-/* secondary + legacy aliases — ghost (kept defined so legacy markup renders calm;
-   de-rainbows the old colored nav tiles) */
-.btn-secondary,
-.btn-success,
-.btn-warning,
-.btn-info { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); }
+/* secondary — ghost (consumed by common.js #ws-retry-btn).
+   Phase 4: .btn-success/.btn-warning/.btn-info aliases trimmed (0 refs in HTML/JS). */
+.btn-secondary { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); }
 
 /* danger — solid red, destructive only */
 .btn-danger { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
@@ -216,12 +265,26 @@ a:hover { text-decoration: underline; }
 
 /* small variant — neutral by default (FIX: was hardcoded red).
    Destructive only via explicit .btn-danger. */
-.btn-sm { padding: 6px 12px; min-height: 32px; font-size: 13px; font-weight: 500; border-radius: var(--radius-sm); gap: 4px; }
+.btn-sm { padding: var(--spacing-xs) var(--spacing-md); min-height: 32px; font-size: 13px; font-weight: 500; border-radius: var(--radius-sm); gap: var(--spacing-xs); }
 .btn-sm svg { width: 14px; height: 14px; }
 
 /* download — accent (constructive file action) */
 .btn-download { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .btn-download:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); color: #fff; }
+
+/* solid roles keep their fill on press (override base .btn:active bg so the
+   accent/danger surface never flashes gray; the scale conveys the press). */
+.btn-primary:active,
+.btn-download:active { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn-danger:active { background: var(--color-danger-hover); border-color: var(--color-danger-hover); }
+
+/* solid CTA focus ring = neutral/dark (Slate 900). Avoids accent-on-accent
+   (a teal ring would vanish against a teal fill at the inner edge). The
+   2px offset seats the ring on the page bg where dark-on-light reads cleanly. */
+.btn-primary:focus-visible,
+.btn-download:focus-visible,
+.btn-danger:focus-visible,
+.path-btn-create:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
 
 /* loading state — hide label, show spinner (uses `spin`).
    Default spinner is DARK so ghost/plain `.btn`, `.back-link`,
@@ -264,12 +327,32 @@ a:hover { text-decoration: underline; }
 }
 .path-bar .path-btn { min-width: 40px; }
 .path-bar .path-btn svg { margin: 0; }
-.path-btn-parent { color: var(--color-text-secondary); }   /* neutral ghost (inherits .btn-sm) */
-.path-btn-create { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }   /* constructive */
+/* path-btn interactive base — these buttons omit the .btn base class, so
+   this supplies centering, transparent tile defaults, transition, the
+   signature 跟手 press, and a focus ring. Equal-specificity modifiers below
+   (.path-btn-parent / .path-btn-create, defined later) layer their look
+   on top, so the base never overrides the create button's solid accent. */
+.path-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+.path-btn:active { transform: scale(0.98); }   /* signature press */
+/* parent = neutral ghost icon tile (mirrors .item .actions .btn-sm) */
+.path-btn-parent { color: var(--color-text-secondary); }
+.path-btn-parent:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); color: var(--color-text); }
+.path-btn-parent:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+/* create = constructive solid-accent CTA (focus ring already covered by the
+   solid-CTA group with .btn-primary/.btn-download/.btn-danger above) */
+.path-btn-create { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .path-btn-create:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); color: #fff; }
 .path-chip {
     flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--spacing-sm);
-    padding: 6px 12px;
+    padding: var(--spacing-xs) var(--spacing-sm);
     background: var(--color-bg-card);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-sm);
@@ -281,18 +364,6 @@ a:hover { text-decoration: underline; }
     color: var(--color-text-secondary);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-/* ===== Servo status ===== */
-.servo-status {
-    display: inline-flex; align-items: center; gap: var(--spacing-sm);
-    margin: var(--spacing-md) auto; padding: 8px 14px;
-    font-size: 14px; font-weight: 600;
-    border-radius: var(--radius-full);
-    border: 1px solid transparent;
-}
-.servo-status.idle { background: rgba(22, 163, 74, 0.08); color: #15803D; border-color: rgba(22, 163, 74, 0.2); }
-.servo-status.busy { background: rgba(220, 38, 38, 0.08); color: #B91C1C; border-color: rgba(220, 38, 38, 0.2); }
-.servo-status .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 
 /* ===== Toasts ===== */
 .toast-container {
@@ -313,7 +384,7 @@ a:hover { text-decoration: underline; }
     border: 1px solid var(--color-border-light);
     border-left: 4px solid var(--color-border);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-md);   /* overlay tier, but lighter than dialogs — transient */
     font-size: 14px; font-weight: 500; line-height: 1.5;
     min-width: 280px; max-width: 380px;
     text-align: left; color: var(--color-text);
@@ -335,7 +406,7 @@ a:hover { text-decoration: underline; }
 .toast.warning .toast-icon { color: var(--color-warning); }
 
 .toast-content { flex: 1; min-width: 0; word-break: break-word; }
-.toast-title { display: block; font-weight: 600; margin-bottom: 2px; color: var(--color-text); }
+.toast-title { display: block; font-weight: 600; margin-bottom: var(--spacing-2xs); color: var(--color-text); }
 .toast-message { display: block; color: var(--color-text-muted); }
 
 .toast-close {
@@ -347,7 +418,7 @@ a:hover { text-decoration: underline; }
 }
 .toast-close svg { width: 14px; height: 14px; }
 .toast-close:hover { background: var(--color-bg-hover); color: var(--color-text); }
-.toast-close:focus-visible { outline: 2px solid var(--color-primary-light); outline-offset: 1px; }
+.toast-close:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
 /* bottom accent stripe (mirrors variant; static — no shimmer) */
 .toast-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; opacity: 0.25; border-radius: 0 0 var(--radius-md) var(--radius-md); }
@@ -387,35 +458,43 @@ a:hover { text-decoration: underline; }
 .prompt-message { color: var(--color-text-muted); font-size: 14px; line-height: 1.6; }
 .prompt-input-wrapper { margin-top: var(--spacing-sm); }
 .prompt-input {
-    width: 100%; padding: 10px 14px;
+    width: 100%; padding: var(--spacing-sm) var(--spacing-md);
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     background: var(--color-bg-card); color: var(--color-text);
     font-family: var(--font-body); font-size: 15px;
     transition: var(--transition-fast);
 }
-.prompt-input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-light); }
+.prompt-input:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; border-color: var(--color-primary); }
 .prompt-input::placeholder { color: var(--color-text-muted); }
 
 .confirm-header { display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-md); }
 .confirm-icon { width: 24px; height: 24px; flex-shrink: 0; color: var(--color-text-muted); }
+/* ICONS use currentColor — variant sets the glyph color (was inline stroke) */
+.confirm-dialog.danger .confirm-icon  { color: var(--color-danger); }
+.confirm-dialog.warning .confirm-icon { color: var(--color-warning); }
+.confirm-dialog.info .confirm-icon    { color: var(--color-primary); }
+.prompt-dialog.success .confirm-icon  { color: var(--color-success); }
 .confirm-title { font-size: 18px; font-weight: 600; color: var(--color-text); }
 .confirm-body { color: var(--color-text-muted); font-size: 14px; line-height: 1.6; margin-bottom: var(--spacing-lg); white-space: pre-line; }
 .confirm-footer { display: flex; gap: var(--spacing-sm); justify-content: flex-end; }
 
 .confirm-btn,
 .confirm-btn-cancel {
-    padding: 9px 18px; min-height: 40px;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    min-height: 40px;
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     background: transparent; color: var(--color-text-secondary);
     font-family: var(--font-body); font-size: 14px; font-weight: 600;
     cursor: pointer; transition: var(--transition-fast);
 }
 .confirm-btn:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); color: var(--color-text); }
-.confirm-btn:focus-visible { outline: 3px solid var(--color-primary-light); outline-offset: 1px; }
+.confirm-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .confirm-btn-confirm { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .confirm-btn-confirm:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); color: #fff; }
 .confirm-btn-confirm.danger { background: var(--color-danger); border-color: var(--color-danger); }
 .confirm-btn-confirm.danger:hover { background: var(--color-danger-hover); border-color: var(--color-danger-hover); }
+/* filled CTA focus ring = neutral/dark (avoids accent-on-accent at the edge) */
+.confirm-btn-confirm:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
 
 /* ===== Log system ===== */
 /* floating toggle (FAB) */
@@ -429,10 +508,10 @@ a:hover { text-decoration: underline; }
 }
 .log-toggle-btn svg { width: 22px; height: 22px; }
 .log-toggle-btn:hover { background: var(--color-primary-hover); box-shadow: var(--shadow-lg); }
-.log-toggle-btn:focus-visible { outline: 3px solid var(--color-primary-light); outline-offset: 2px; }
+.log-toggle-btn:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }   /* filled CTA → neutral ring */
 
 /* connection status ring (semantic color) */
-.log-toggle-status-ring { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--color-text-light); border: 2px solid var(--color-bg-card); }
+.log-toggle-status-ring { position: absolute; top: var(--spacing-2xs); left: var(--spacing-2xs); width: 12px; height: 12px; border-radius: 50%; background: var(--color-text-light); border: 2px solid var(--color-bg-card); }
 .log-toggle-btn[data-ws-state="connected"] .log-toggle-status-ring { background: var(--color-success); }
 .log-toggle-btn[data-ws-state="connecting"] .log-toggle-status-ring,
 .log-toggle-btn[data-ws-state="reconnecting"] .log-toggle-status-ring { background: var(--color-warning); }
@@ -440,8 +519,8 @@ a:hover { text-decoration: underline; }
 
 /* unread badge */
 .log-toggle-badge {
-    position: absolute; top: -4px; right: -4px;
-    min-width: 20px; height: 20px; padding: 0 5px;
+    position: absolute; top: calc(-1 * var(--spacing-xs)); right: calc(-1 * var(--spacing-xs));
+    min-width: 20px; height: 20px; padding: 0 var(--spacing-xs);
     border-radius: var(--radius-full);
     background: var(--color-danger); color: #fff;
     border: 2px solid var(--color-bg-card);
@@ -473,11 +552,11 @@ a:hover { text-decoration: underline; }
 }
 .log-float-title { display: flex; align-items: center; gap: var(--spacing-sm); color: var(--color-text); font-size: 14px; font-weight: 600; }
 .log-float-title svg { width: 16px; height: 16px; }
-.log-float-controls { display: flex; gap: 4px; flex-shrink: 0; }
+.log-float-controls { display: flex; gap: var(--spacing-xs); flex-shrink: 0; }
 
 .log-header-unread {
     display: inline-flex; align-items: center;
-    min-height: 22px; padding: 2px 8px;
+    min-height: 22px; padding: var(--spacing-2xs) var(--spacing-sm);
     border-radius: var(--radius-full);
     background: rgba(220, 38, 38, 0.1); color: var(--color-danger-hover);
     font-size: 11px; font-weight: 700; white-space: nowrap;
@@ -506,16 +585,16 @@ a:hover { text-decoration: underline; }
     margin-bottom: var(--spacing-sm); flex-shrink: 0;
 }
 .log-float-toolbar select {
-    flex: 1; min-width: 120px; padding: 6px 10px;
+    flex: 1; min-width: 120px; padding: var(--spacing-xs) var(--spacing-sm);
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     background: var(--color-bg-card); color: var(--color-text);
     font-family: var(--font-body); font-size: 12px;
     cursor: pointer; transition: var(--transition-fast);
 }
 .log-float-toolbar select:hover { border-color: var(--color-border-hover); }
-.log-float-toolbar select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-light); }
+.log-float-toolbar select:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; border-color: var(--color-primary); }
 .log-float-toolbar button {
-    padding: 6px 12px;
+    padding: var(--spacing-xs) var(--spacing-sm);
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     background: var(--color-bg-card); color: var(--color-text-secondary);
     font-family: var(--font-body); font-size: 12px; font-weight: 500;
@@ -523,19 +602,19 @@ a:hover { text-decoration: underline; }
 }
 .log-float-toolbar button:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); color: var(--color-text); }
 
-.log-meta { display: flex; flex: 1 1 220px; flex-wrap: wrap; gap: 4px; }
+.log-meta { display: flex; flex: 1 1 220px; flex-wrap: wrap; gap: var(--spacing-xs); }
 .log-meta-chip {
     display: inline-flex; align-items: center;
-    min-height: 24px; padding: 3px 8px;
+    min-height: 24px; padding: var(--spacing-2xs) var(--spacing-sm);
     border-radius: var(--radius-full);
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-light);
     color: var(--color-text-secondary);
     font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
 }
-.log-meta-chip.connection-connected { background: rgba(22, 163, 74, 0.1); border-color: rgba(22, 163, 74, 0.2); color: #15803D; }
+.log-meta-chip.connection-connected { background: rgba(22, 163, 74, 0.1); border-color: rgba(22, 163, 74, 0.2); color: var(--color-success-hover); }
 .log-meta-chip.connection-connecting,
-.log-meta-chip.connection-reconnecting { background: rgba(217, 119, 6, 0.1); border-color: rgba(217, 119, 6, 0.25); color: #B45309; }
+.log-meta-chip.connection-reconnecting { background: rgba(217, 119, 6, 0.1); border-color: rgba(217, 119, 6, 0.25); color: var(--color-warning-hover); }
 .log-meta-chip.connection-disconnected { background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.2); color: var(--color-danger-hover); }
 
 .log-float-output {
@@ -553,12 +632,12 @@ a:hover { text-decoration: underline; }
 .log-float-output:empty::after { content: '暂无日志'; display: block; text-align: center; color: var(--color-text-muted); font-size: 12px; padding: var(--spacing-lg) 0; }
 
 /* compact entries inside the float window */
-.log-float-output .log-entry { padding: 6px 8px; margin-bottom: 4px; font-size: 11px; }
+.log-float-output .log-entry { padding: var(--spacing-xs) var(--spacing-sm); margin-bottom: var(--spacing-xs); font-size: 11px; }
 
 /* log entries + level colors (information-bearing) */
 .log-entry {
-    display: flex; flex-direction: column; gap: 4px;
-    padding: 6px 8px; margin-bottom: 4px;
+    display: flex; flex-direction: column; gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm); margin-bottom: var(--spacing-xs);
     border-radius: var(--radius-sm);
     border-left: 2px solid transparent;
     transition: var(--transition-fast);
@@ -566,17 +645,17 @@ a:hover { text-decoration: underline; }
 }
 .log-entry:hover { background: var(--color-bg-hover); }
 .log-entry.hidden { display: none; }
-.log-entry-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.log-entry-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-xs); }
 .log-time { color: var(--color-text-light); font-family: var(--font-heading); font-size: 10px; min-width: 56px; opacity: 0.85; }
 .log-level-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    min-width: 52px; min-height: 18px; padding: 0 6px;
+    min-width: 52px; min-height: 18px; padding: 0 var(--spacing-xs);
     border-radius: var(--radius-full);
     background: rgba(15, 23, 42, 0.08); color: var(--color-text-secondary);
     font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
 }
 .log-tag {
-    padding: 1px 6px; border-radius: var(--radius-full);
+    padding: var(--spacing-2xs) var(--spacing-xs); border-radius: var(--radius-full);
     background: rgba(15, 23, 42, 0.06); color: var(--color-text-muted);
     font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
 }
@@ -588,12 +667,12 @@ a:hover { text-decoration: underline; }
 .log-entry.error .log-message { color: var(--color-danger-hover); }
 
 .log-entry.warn { background: rgba(217, 119, 6, 0.06); border-left-color: var(--color-warning); }
-.log-entry.warn .log-tag { background: rgba(217, 119, 6, 0.14); color: #B45309; }
+.log-entry.warn .log-tag { background: rgba(217, 119, 6, 0.14); color: var(--color-warning-hover); }
 .log-entry.warn .log-level-badge { background: var(--color-warning); color: #fff; }
-.log-entry.warn .log-message { color: #92400E; }
+.log-entry.warn .log-message { color: var(--color-warning-hover); }
 
-.log-entry.info { background: rgba(8, 145, 178, 0.05); border-left-color: var(--color-primary); }
-.log-entry.info .log-tag { background: rgba(8, 145, 178, 0.1); color: var(--color-primary-hover); }
+.log-entry.info { background: rgba(14, 116, 144, 0.05); border-left-color: var(--color-primary); }
+.log-entry.info .log-tag { background: rgba(14, 116, 144, 0.1); color: var(--color-primary-hover); }
 .log-entry.info .log-level-badge { background: var(--color-primary); color: #fff; }
 .log-entry.info .log-message { color: var(--color-primary-hover); }
 
@@ -613,13 +692,13 @@ a:hover { text-decoration: underline; }
 /* ===== Progress bars (no shimmer — just fill) ===== */
 .progress-container {
     width: 100%; height: 24px;
-    background: var(--color-border);
+    background: var(--color-border-light);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-full);
     overflow: hidden; margin: var(--spacing-md) 0;
     display: none;
 }
-.progress-bar-container { width: 100%; height: 20px; background: var(--color-border); border-radius: var(--radius-full); overflow: hidden; margin-top: var(--spacing-md); }
+.progress-bar-container { width: 100%; height: 20px; background: var(--color-border-light); border-radius: var(--radius-full); overflow: hidden; margin-top: var(--spacing-md); }
 .progress-bar { width: 0%; height: 100%; background: var(--color-success); border-radius: var(--radius-full); transition: width 0.4s ease; }
 .progress-bar.warning { background: var(--color-warning); }
 .progress-bar.danger  { background: var(--color-danger); }
@@ -627,7 +706,6 @@ a:hover { text-decoration: underline; }
 .storage-info .progress-container { display: block; height: 20px; margin: var(--spacing-sm) 0 0; }
 
 /* ===== Upload ===== */
-.upload-section,
 .upload-box,
 .upload-area {
     border: 2px dashed var(--color-border);
@@ -638,22 +716,23 @@ a:hover { text-decoration: underline; }
     transition: var(--transition-fast);
     cursor: pointer; text-align: center; user-select: none;
 }
-.upload-section:hover,
 .upload-box:hover,
 .upload-area:hover { border-color: var(--color-border-hover); background: var(--color-bg-hover); }
 
 /* dropzone: strong delta — 2px accent border + ~8% accent tint */
-.upload-section.drag-over,
 .upload-box.drag-over,
 .upload-area.drag-over { border-color: var(--color-primary); border-style: solid; background: var(--color-primary-light); }
 
 /* file selected pre-upload */
-.upload-section.has-file,
 .upload-box.has-file,
 .upload-area.has-file { border-color: var(--color-primary); border-style: solid; }
 
 .upload-content,
 .upload-box-content { position: relative; }
+/* SVG is block (global reset), so text-align:center can't center it;
+   horizontal auto-margins do. Fixes left-aligned upload icons. */
+.upload-content :where(svg),
+.upload-box-content :where(svg) { margin-left: auto; margin-right: auto; }
 .upload-content :where(svg) { width: 40px; height: 40px; color: var(--color-primary-hover); margin-bottom: var(--spacing-md); }
 .upload-box-content :where(svg) { width: 56px; height: 56px; color: var(--color-primary-hover); margin-bottom: var(--spacing-md); }
 .upload-content h3,
@@ -677,7 +756,7 @@ a:hover { text-decoration: underline; }
 .upload-progress {
     margin-top: var(--spacing-sm); position: relative;
     width: 100%; height: 20px;
-    background: var(--color-border);
+    background: var(--color-border-light);
     border-radius: var(--radius-full);
     overflow: hidden; display: none;
 }
@@ -694,14 +773,44 @@ a:hover { text-decoration: underline; }
     border-left: 3px solid var(--color-border);
     border-radius: var(--radius-sm);
     cursor: pointer; transition: var(--transition-fast);
+    text-align: left;
 }
-.item:hover { background: var(--color-bg-hover); border-left-color: var(--color-primary); }
+/* row tier: hover lifts via shadow-sm + accent left-stripe (static, not animated) */
+.item:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); border-left-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+/* staggered entrance (class-toggle, same mechanism as .wifi-item-enter).
+   var(--transition-fast) is listed FIRST in the visible state so hover
+   (bg/border/shadow) keeps its snappy 0.14s while opacity/transform enter
+   at 0.3s — the later, property-specific entries win for those two only.
+   JS adds .item-visible per-item; reduced-motion forces .item-enter
+   visible (see the reduced-motion block). */
+.item.item-enter { opacity: 0; transform: translateY(8px); }
+.item.item-enter.item-visible {
+    opacity: 1; transform: none;
+    transition: var(--transition-fast), opacity 0.3s ease, transform 0.3s ease;
+}
 .item.directory { border-left-color: var(--color-success); font-weight: 600; }
 .item .name { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--spacing-sm); font-size: 14px; color: var(--color-text); }
 .item .icon { flex-shrink: 0; color: var(--color-text-muted); }
 .item.directory .icon { color: var(--color-success); }
 .item .size { margin-right: var(--spacing-sm); color: var(--color-text-muted); font-size: 12px; font-family: var(--font-heading); }
 .item .actions { display: flex; gap: 4px; }
+/* file-row action buttons: compact icon-only tiles, neutral ghost by default,
+   semantic color on hover (download→accent, delete→danger). Scoped to .item
+   .actions so the path-bar's own .btn-sm buttons are unaffected. .btn-download
+   is normally a solid accent CTA; inside a file row a filled button is too
+   heavy, so it demotes to a ghost icon tile here. */
+.item .actions .btn-sm {
+    width: 32px; height: 32px; padding: 0; min-height: unset;
+    border-radius: var(--radius-sm);
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border-color: transparent;
+    color: var(--color-text-muted);
+    transition: var(--transition-fast);
+}
+.item .actions .btn-sm svg { width: 16px; height: 16px; margin: 0; }
+.item .actions .btn-sm:hover { background: var(--color-bg-hover); border-color: var(--color-border-hover); color: var(--color-text); }
+.item .actions .btn-download:hover { color: var(--color-primary-hover); background: var(--color-primary-light); border-color: var(--color-primary); }
+.item .actions .btn-delete:hover { color: var(--color-danger-hover); background: var(--color-danger-light); border-color: var(--color-danger); }
 .empty {
     text-align: center; color: var(--color-text-muted);
     padding: var(--spacing-xl) var(--spacing-md); font-size: 14px;
@@ -722,12 +831,17 @@ a:hover { text-decoration: underline; }
 }
 .back-link svg { width: 16px; height: 16px; }
 .back-link:hover { background: var(--color-bg-hover); color: var(--color-primary); }
+.back-link:active { transform: scale(0.98); }   /* signature press motion */
+
+/* Back-to-home wrapper — centers the back link below content (global; the
+   #page-cards-scoped twin in pages.css is now redundant, trim in Phase 4). */
+.back-to-home { text-align: center; margin-top: var(--spacing-xl); }
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
     body { padding: var(--spacing-md); }
     .container { padding: var(--spacing-md); }
-    h1 { font-size: 24px; }
+    h1 { font-size: 28px; }
 
     .btn-group .btn { width: 100%; }
 
@@ -756,9 +870,8 @@ a:hover { text-decoration: underline; }
 @media (max-width: 480px) {
     body { padding: var(--spacing-sm); }
     .container { padding: var(--spacing-sm); }
-    h1 { font-size: 22px; }
+    h1 { font-size: 24px; }
 
-    .upload-section,
     .upload-box { padding: var(--spacing-lg); }
 
     .log-float-header { padding: var(--spacing-xs) var(--spacing-sm); }
@@ -780,6 +893,12 @@ a:hover { text-decoration: underline; }
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+    /* honor reduced-motion for the signature press-scale too */
+    .btn:active, .back-link:active, .path-bar .path-btn:active { transform: none; }
+    /* class-toggle list entrance: skip the stagger and show items at once,
+       so the per-item setTimeout never leaves anything invisible while it
+       waits for its turn (opacity/transform reset to the resting state). */
+    .item.item-enter { opacity: 1; transform: none; }
 }
 
 /* ===== Page transitions (SPA) ===== */

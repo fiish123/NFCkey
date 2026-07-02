@@ -12,15 +12,26 @@
     <div class="container narrow" data-animate>
         <h1>WiFi配置</h1>
 
-        <!-- WiFi状态和扫描区域 -->
-        <div class="section wifi-status-section">
-            <!-- WiFi状态显示 -->
-            <div class="status-indicator">
-                <span class="status-dot" id="wifiStatusDot" aria-hidden="true"></span>
-                <span id="wifiStatusText" role="status" aria-live="polite">加载中...</span>
+        <!-- 当前连接状态（页面主信息锚点） -->
+        <div class="wifi-status-banner state-muted" id="wifiStatusBanner">
+            <div class="status-banner-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                    <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                </svg>
             </div>
+            <div class="status-banner-body">
+                <span class="status-banner-label">当前连接</span>
+                <span class="status-banner-text" id="wifiStatusText" role="status" aria-live="polite">加载中...</span>
+            </div>
+            <span class="status-dot" id="wifiStatusDot" aria-hidden="true"></span>
+        </div>
 
-            <!-- 扫描按钮 -->
+        <!-- 可用网络（扫描入口 + 结果列表） -->
+        <div class="section">
+            <h3>可用网络</h3>
             <button type="button" onclick="scanWifi()" class="btn btn-primary wifi-scan-btn" id="scanBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
@@ -30,41 +41,43 @@
                 </svg>
                 扫描WiFi网络
             </button>
+            <div id="wifiList" class="wifi-list">
+                <p class="wifi-empty-text">点击"扫描WiFi网络"开始扫描</p>
+            </div>
         </div>
 
-        <!-- WiFi网络列表 -->
-        <div id="wifiList" class="wifi-list">
-            <p class="wifi-empty-text">点击"扫描WiFi网络"开始扫描</p>
-        </div>
-
-        <!-- WiFi配置表单 -->
-        <div id="wifiConfig" class="section wifi-config-section" style="display: none;">
-            <h3>连接到: <span id="selectedSSID"></span></h3>
+        <!-- 连接配置 -->
+        <div id="wifiConfig" class="section is-hidden">
+            <h3>连接到网络</h3>
+            <div class="selected-network">
+                <span class="selected-network-label">已选择</span>
+                <span class="ssid-chip" id="selectedSSID"></span>
+            </div>
             <form onsubmit="return false;">
                 <div class="input-group">
                     <label for="wifiPassword">WiFi密码</label>
                     <div class="password-wrapper">
                         <input type="password" id="wifiPassword" class="wifi-password" placeholder="输入WiFi密码" autocomplete="current-password" aria-describedby="passwordError" />
                         <button type="button" class="password-toggle" id="passwordToggle" aria-label="显示密码">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                        </svg>
-                    </button>
-                </div>
-                <div class="error-hint" id="passwordError" role="status" aria-live="polite">请输入WiFi密码</div>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="error-hint" id="passwordError" role="status" aria-live="polite">请输入WiFi密码</div>
                 </div>
             </form>
 
             <div class="wifi-actions-row">
-                <button type="button" onclick="testConnection()" class="btn btn-warning" id="testBtn">
+                <button type="button" onclick="testConnection()" class="btn" id="testBtn">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
                         <polyline points="22 4 12 14.01 9 11.01"></polyline>
                     </svg>
                     测试连接
                 </button>
-                <button type="button" onclick="saveConfig()" class="btn btn-success" id="saveBtn">
+                <button type="button" onclick="saveConfig()" class="btn" id="saveBtn">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                         <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -75,9 +88,9 @@
             </div>
         </div>
 
-        <!-- 清除配置按钮 -->
-        <div class="wifi-danger-section">
-            <button type="button" onclick="clearConfig()" class="btn btn-danger wifi-clear-btn" id="clearBtn">
+        <!-- 清除配置（次要危险操作） -->
+        <div class="wifi-danger-row">
+            <button type="button" onclick="clearConfig()" class="btn btn-sm wifi-clear-btn" id="clearBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polyline points="3 6 5 6 21 6"></polyline>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -87,13 +100,15 @@
         </div>
 
         <!-- 返回首页 -->
-        <a href="/" class="btn wifi-back-link">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="19" y1="12" x2="5" y2="12"></line>
-                <polyline points="12 19 5 12 12 5"></polyline>
-            </svg>
-            返回首页
-        </a>
+        <div class="back-to-home">
+            <a href="/" class="back-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                返回首页
+            </a>
+        </div>
 
     </div>
     </main>

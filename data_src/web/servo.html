@@ -12,27 +12,21 @@
     <div class="container narrow" data-animate>
         <h1>舵机管理</h1>
 
-        <!-- 舵机状态 -->
-        <div id="servoStatus" class="servo-status idle" style="margin-bottom: var(--spacing-xl);" role="status" aria-live="polite">
-            <span class="status-dot" aria-hidden="true"></span>
-            <span>状态: 空闲</span>
-        </div>
-
         <!-- 舵机控制与配置 -->
         <div class="section">
             <h3>舵机控制与配置</h3>
-            
+
             <!-- 舵机控制按钮 -->
-            <div class="btn-group horizontal" style="margin-bottom: var(--spacing-lg);">
-                <button type="button" onclick="unlock()" class="btn btn-success" id="unlockBtn" style="flex: 1;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;" aria-hidden="true">
+            <div class="btn-group horizontal">
+                <button type="button" onclick="unlock()" class="btn" id="unlockBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                     </svg>
                     解锁
                 </button>
-                <button type="button" onclick="lock()" class="btn btn-warning" id="lockBtn" style="flex: 1;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;" aria-hidden="true">
+                <button type="button" onclick="lock()" class="btn" id="lockBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                         <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
                     </svg>
@@ -40,59 +34,49 @@
                 </button>
             </div>
 
-            <hr style="border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-md) 0 var(--spacing-lg) 0;">
-
             <!-- 实时测试位置 -->
-            <div style="margin-bottom: var(--spacing-xl);">
-                <h4 style="font-size: 14px; color: var(--color-text-muted); margin-bottom: var(--spacing-sm); font-weight: 500;">实时测试位置</h4>
-                <div class="servo-position-control">
-                    <div class="position-header">
-                        <label for="testSlider">测试位置</label>
-                        <span class="position-percent" id="testPercent">0%</span>
-                    </div>
-                    <div class="position-control-row">
-                        <input type="range" id="testSlider" min="0" max="1280" value="0" class="slider" aria-label="测试位置滑块" />
-                        <input type="number" id="testPos" min="0" max="1280" value="0" class="position-input" aria-label="测试位置数值" />
-                    </div>
+            <h4>实时测试位置</h4>
+            <div class="servo-position-control">
+                <div class="position-header">
+                    <label for="testSlider">测试位置</label>
+                    <span class="position-percent" id="testPercent">0%</span>
                 </div>
-                <p style="font-size: 12px; color: var(--color-text-muted); margin-top: 8px;">
-                    拖动滑动条可实时控制舵机位置
-                </p>
+                <div class="position-control-row">
+                    <input type="range" id="testSlider" min="0" max="1280" value="0" class="slider" aria-label="测试位置滑块" />
+                    <input type="number" id="testPos" min="0" max="1280" value="0" class="position-input" aria-label="测试位置数值" />
+                </div>
             </div>
-
-            <hr style="border: none; border-top: 1px solid var(--color-border-light); margin: var(--spacing-lg) 0 var(--spacing-lg) 0;">
+            <p class="toggle-hint">拖动滑动条可实时控制舵机位置</p>
 
             <!-- 舵机位置配置 -->
-            <div style="margin-bottom: var(--spacing-md);">
-                <h4 style="font-size: 14px; color: var(--color-text-muted); margin-bottom: var(--spacing-sm); font-weight: 500;">位置配置</h4>
-                
-                <!-- 解锁位置 -->
-                <div class="servo-position-control">
-                    <div class="position-header">
-                        <label for="unlockPos">解锁位置</label>
-                        <span class="position-percent" id="unlockPercent">0%</span>
-                    </div>
-                    <div class="position-control-row">
-                        <input type="range" id="unlockSlider" min="0" max="1280" class="slider" aria-label="解锁位置滑块" />
-                        <input type="number" id="unlockPos" min="0" max="1280" class="position-input" aria-label="解锁位置数值" />
-                    </div>
+            <h4>位置配置</h4>
+
+            <!-- 解锁位置 -->
+            <div class="servo-position-control">
+                <div class="position-header">
+                    <label for="unlockPos">解锁位置</label>
+                    <span class="position-percent" id="unlockPercent">0%</span>
                 </div>
-                
-                <!-- 锁定位置 -->
-                <div class="servo-position-control">
-                    <div class="position-header">
-                        <label for="lockPos">锁定位置</label>
-                        <span class="position-percent" id="lockPercent">0%</span>
-                    </div>
-                    <div class="position-control-row">
-                        <input type="range" id="lockSlider" min="0" max="1280" class="slider" aria-label="锁定位置滑块" />
-                        <input type="number" id="lockPos" min="0" max="1280" class="position-input" aria-label="锁定位置数值" />
-                    </div>
+                <div class="position-control-row">
+                    <input type="range" id="unlockSlider" min="0" max="1280" class="slider" aria-label="解锁位置滑块" />
+                    <input type="number" id="unlockPos" min="0" max="1280" class="position-input" aria-label="解锁位置数值" />
                 </div>
             </div>
-            
-            <button type="button" onclick="saveConfig()" class="btn btn-primary" style="width: 100%;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; margin-right: 8px;" aria-hidden="true">
+
+            <!-- 锁定位置 -->
+            <div class="servo-position-control">
+                <div class="position-header">
+                    <label for="lockPos">锁定位置</label>
+                    <span class="position-percent" id="lockPercent">0%</span>
+                </div>
+                <div class="position-control-row">
+                    <input type="range" id="lockSlider" min="0" max="1280" class="slider" aria-label="锁定位置滑块" />
+                    <input type="number" id="lockPos" min="0" max="1280" class="position-input" aria-label="锁定位置数值" />
+                </div>
+            </div>
+
+            <button type="button" onclick="saveConfig()" class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                     <polyline points="17 21 17 13 7 13 7 21"></polyline>
                     <polyline points="7 3 7 8 15 8"></polyline>
@@ -102,9 +86,9 @@
         </div>
 
         <!-- 返回首页 -->
-        <div style="text-align: center; margin-top: var(--spacing-xl);">
+        <div class="back-to-home">
             <a href="/" class="btn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 8px;" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <line x1="19" y1="12" x2="5" y2="12"></line>
                     <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>

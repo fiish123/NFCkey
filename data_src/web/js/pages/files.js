@@ -6,8 +6,8 @@
     let systemInfoPromise = null;
 
     // SVG图标
-    const dirIcon = `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
-    const fileIcon = `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0891B2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>`;
+    const dirIcon = `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
+    const fileIcon = `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>`;
     const deleteIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
     const downloadIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
 
@@ -187,26 +187,33 @@
         const sortedItems = [...directories, ...files];
 
         let html = '';
-        sortedItems.forEach((item, index) => {
+        sortedItems.forEach((item) => {
             const isDir = item.isDirectory;
             const icon = isDir ? dirIcon : fileIcon;
             const sizeStr = isDir ? '<DIR>' : formatFileSize(item.size);
             const escapedName = item.name.replace(/'/g, "\\'").replace(/"/g, '"');
             const onclick = isDir ? `onclick="navigate('${escapedName}')"` : '';
-            const delayStyle = `style="animation-delay: ${index * 0.05}s;"`;
             html += `
-                <div class="item ${isDir ? 'directory' : ''}" ${delayStyle} ${onclick} role="button" tabindex="0" aria-label="${escapedName}">
+                <div class="item item-enter ${isDir ? 'directory' : ''}" ${onclick} role="button" tabindex="0" aria-label="${escapedName}">
                     <span class="name">${icon} ${item.name}</span>
                     <span class="size">${sizeStr}</span>
                     <div class="actions">
-                        ${isDir ? '' : '<button class="btn-sm btn-download" onclick="event.stopPropagation(); downloadFile(\'' + escapedName + '\')" aria-label="下载文件">' + downloadIcon + ' 下载</button>'}
-                        ${isDir ? '' : '<button class="btn-sm" onclick="event.stopPropagation(); deleteItem(\'' + escapedName + '\', false)" aria-label="删除文件">' + deleteIcon + ' 删除</button>'}
-                        ${isDir ? '<button class="btn-sm" onclick="event.stopPropagation(); deleteItem(\'' + escapedName + '\', true)" aria-label="删除目录">' + deleteIcon + ' 删除目录</button>' : ''}
+                        ${isDir ? '' : '<button class="btn-sm btn-download" onclick="event.stopPropagation(); downloadFile(\'' + escapedName + '\')" aria-label="下载文件">' + downloadIcon + '</button>'}
+                        ${isDir ? '' : '<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteItem(\'' + escapedName + '\', false)" aria-label="删除文件">' + deleteIcon + '</button>'}
+                        ${isDir ? '<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteItem(\'' + escapedName + '\', true)" aria-label="删除目录">' + deleteIcon + '</button>' : ''}
                     </div>
                 </div>
             `;
         });
         container.innerHTML = html;
+
+        // 逐项淡入（class-toggle，与 wifi 页一致）：每项带 item-enter 起始隐藏，
+        // 再按 40ms 步进逐个加 item-visible。大目录封顶 12 项（之后立刻显示），
+        // 避免长列表动画过久；prefers-reduced-motion 下 CSS 直接令 item-enter 可见。
+        const enterNodes = container.querySelectorAll('.item-enter');
+        enterNodes.forEach((node, i) => {
+            setTimeout(() => node.classList.add('item-visible'), Math.min(i, 12) * 40);
+        });
     }
 
     function navigate(name) {

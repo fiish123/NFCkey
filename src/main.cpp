@@ -276,13 +276,12 @@ unsigned char playlist[20] = {};
 volatile unsigned int playlistcount = 0, playlistindex = 0;
 volatile bool isplaying = false;
 
-// 舵机动作（Web 调用时通过队列异步执行，避免阻塞 Web 线程）
+// 舵机动作
 volatile bool isservobusy = false;
 
 StaticSemaphore_t xMutexBuffer;
 SemaphoreHandle_t servolock;
 
-QueueHandle_t servoQueue = nullptr;
 static TaskHandle_t servoTaskHandle = NULL;
 
 // 获取/释放舵机占用
@@ -290,6 +289,7 @@ static bool tryAcquireServo()
 {
   if (xSemaphoreTake(servolock, 0) == pdTRUE)
   {
+    switchconnect(2); // 切换到舵机通信
     isservobusy = true;
     return true;
   }
@@ -302,27 +302,10 @@ static bool releaseServo()
     isservobusy = false;
     return true;
   }
-  return false; // 不是持有者，拒接释放
-}
-
-// 前置声明：sendServoPosition 定义在文件后部
-void sendServoPosition(unsigned int in);
-
-// 舵机任务：取出目标位置并执行（带 1s 延时），跑在独立任务上避免阻塞 Web 线程
-void servoTask(void *parameter)
-{
-  while (1)
-  {
-    uint16_t target;
-    xQueueReceive(servoQueue, &target, portMAX_DELAY);
-
-    sendServoPosition(target);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    powermanager(2, false);
-    releaseServo();
-    LOG_I("API调用: 舵机移动至位置 %d", target);
-  }
+  vTaskDelay(pdMS_TO_TICKS(100));
+  switchconnect(1); // 切换到读卡器通信
+  powermanager(2, false);
+  return false;
 }
 
 void playerList(void *parameter)
@@ -342,7 +325,7 @@ void playerList(void *parameter)
       powermanager(1, false);
       LOG_D("音频队列播放完成");
 
-      player1.stop();
+      player1.end();
 
       playlistcount = 0;
       playlistindex = 0;
@@ -354,7 +337,11 @@ void playerList(void *parameter)
 // 添加播放任务到列表
 void addTolist(unsigned int in)
 {
-  isplaying = true;
+  if (!isplaying)
+  {
+    isplaying = true;
+    player1.begin();
+  }
 
   powermanager(1, true);
 
@@ -407,8 +394,6 @@ void getServoConfig(uint16_t &unlock, uint16_t &lock)
 // 发送舵机位置控制指令
 void sendServoPosition(unsigned int in)
 {
-  // 切换uart通信
-  switchconnect(2);
 
   uint16_t position = static_cast<uint16_t>(in);
 
@@ -459,15 +444,10 @@ void sendServoPosition(unsigned int in)
   Serial1.write(HEADER, 2); // 发送包头
   Serial1.write(data, 6);   // 发送数据部分
   Serial1.write(checksum);  // 发送校验和
-
-  vTaskDelay(pdMS_TO_TICKS(100));
-  switchconnect(1);
 }
 
 void Switchlock()
 {
-  if (!tryAcquireServo())
-    return;
 
   // UNLOCKING
   sendServoPosition(unlockPosition);
@@ -478,25 +458,22 @@ void Switchlock()
   sendServoPosition(lockPosition);
   vTaskDelay(pdMS_TO_TICKS(1000));
 
-  LOG_D("舵机动作执行完成");
-
-  powermanager(2, false);
-
-  releaseServo();
+  LOG_D("舵机解/上锁执行完成");
 }
 
-// 投递一次舵机移动到队列（非阻塞）。供 Web 调用，真正动作在 servoTask 执行。
+// 投递一次舵机移动
 bool executePosition(uint16_t position)
 {
+
   if (!tryAcquireServo())
     return false;
 
-  uint16_t target = position;
-  if (xQueueSend(servoQueue, &target, 0) != pdPASS)
-  {
-    releaseServo();
-    return false;
-  }
+  sendServoPosition(position);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  releaseServo();
+  LOG_I("API调用: 舵机移动至位置 %d", position);
+
   return true;
 }
 
@@ -561,15 +538,6 @@ void setup()
   {
     LOG_W("授权卡片不可用，启动Web管理服务用于配置");
     initWebServer();
-    xTaskCreatePinnedToCore(
-        servoTask,        // 任务函数
-        "servo",          // 任务名称
-        3072,             // 堆栈大小（字节）
-        NULL,             // 参数
-        2,                // 优先级
-        &servoTaskHandle, // 任务句柄
-        0                 // 核心编号
-    );
     webServerStartTime = millis();
   }
 
@@ -582,6 +550,7 @@ void setup()
   cfg.pin_ws = LRC1_PIN;
   i2s.begin(cfg);
   player1.begin();
+
   xTaskCreatePinnedToCore(
       playerList,        // 任务函数
       "playerlist1",     // 任务名称
@@ -591,8 +560,6 @@ void setup()
       &playerListHandle, // 任务句柄
       0                  // 核心编号
   );
-
-  servoQueue = xQueueCreate(1, sizeof(uint16_t));
 
   vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -693,6 +660,11 @@ void loop()
             vTaskDelay(pdMS_TO_TICKS(10));
           }
           Switchlock();
+          releaseServo();
+        }
+        else
+        {
+          LOG_W("解锁失败，舵机忙");
         }
       }
       else
@@ -704,7 +676,6 @@ void loop()
         addTolist(4);
 
         consecutiveCardCount = 0;
-        ;
       }
     }
     else
@@ -719,9 +690,8 @@ void loop()
       vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-
     uint32_t lasttime = millis();
-    while (lasttime - millis() < 500 and digitalRead(IRQ) == LOW)
+    while (lasttime - millis() < 1000 and digitalRead(IRQ) == LOW)
     {
       lasttime = millis();
     }
@@ -732,23 +702,14 @@ void loop()
       consecutiveCardCount++;
     }
 
-    if (consecutiveCardCount >= 3)
+    if (consecutiveCardCount >= 2)
     {
+      LOG_I("检测到连续刷卡");
       if (!isWebServerRunning())
-        LOG_I("检测到连续刷卡");
-      initWebServer();
-      xTaskCreatePinnedToCore(
-          servoTask,        // 任务函数
-          "servo",          // 任务名称
-          3072,             // 堆栈大小（字节）
-          NULL,             // 参数
-          2,                // 优先级
-          &servoTaskHandle, // 任务句柄
-          0                 // 核心编号
-      );
+        initWebServer();
       consecutiveCardCount = 0;
       vTaskDelay(pdMS_TO_TICKS(10000));
-      break;
+      return;
     }
   }
 

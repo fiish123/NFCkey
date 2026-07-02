@@ -1,5 +1,74 @@
 // 公共JavaScript函数库
 
+// ===== ICONS — 全局唯一 SVG 图标来源 =====
+// 所有 stroke=currentColor；颜色由各表面的 CSS 按变体设定。
+// 取代此前 Toast/Confirm/Prompt/LogWindow 各自内联的重复 SVG 字符串。
+const ICONS = {
+    // 状态图标（圆形/三角几何）
+    success:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>',
+    error:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
+    info:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>',
+    warning:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
+    alertCircle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
+    close:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
+    // 日志浮窗 UI 图标（装饰性，aria-hidden）
+    logToggle:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>',
+    logTitle:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
+    minimize:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+    restore:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>'
+};
+
+// ===== _Dialog — 共享对话框基座 =====
+// Confirm 与 Prompt 同为 .confirm-overlay 上的模态对话框：共用
+// overlay 建拆 / ESC / 遮罩点击关闭 / 焦点回退 / removing→detach 淡出序列。
+// Toast 仅复用 fadeRemove（逐条 toast 的淡出拆除）。
+const _Dialog = {
+    // 单节点淡出拆除：加 .removing 触发 CSS 动画，延时后移除。
+    fadeRemove(node, delay = 200) {
+        if (!node || !node.parentNode) return;
+        node.classList.add('removing');
+        setTimeout(() => { if (node.parentNode) node.parentNode.removeChild(node); }, delay);
+    },
+
+    // 把 dialog 挂载到新建的 .confirm-overlay；接管 ESC + 遮罩点击；
+    // close(result) 触发一次性淡出拆除并把焦点还给 trigger，再经 onResult
+    // 把 result 回传给调用方（Promise resolve）。dismissValue 是 ESC/遮罩
+    // 关闭时回传的值（Confirm=false，Prompt=null，保持各自契约）。
+    // 返回 { overlay, close } — 按钮处理器自行决定传给 close 的值。
+    modal({ dialog, onResult, allowBackdropClose = true, dismissValue = false, trigger }) {
+        const overlay = document.createElement('div');
+        overlay.className = 'confirm-overlay';
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const restoreFocusTo = trigger || document.activeElement;
+        let done = false;
+
+        function close(result) {
+            if (done) return;
+            done = true;
+            document.removeEventListener('keydown', onKeydown);
+            overlay.removeEventListener('click', onBackdrop);
+            overlay.classList.add('removing');
+            dialog.classList.add('removing');
+            if (restoreFocusTo && typeof restoreFocusTo.focus === 'function') {
+                restoreFocusTo.focus();
+            }
+            setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 200);
+            if (typeof onResult === 'function') onResult(result);
+        }
+
+        function onKeydown(e) { if (e.key === 'Escape') close(dismissValue); }
+        function onBackdrop(e) {
+            if (allowBackdropClose && e.target === overlay) close(dismissValue);
+        }
+
+        document.addEventListener('keydown', onKeydown);
+        overlay.addEventListener('click', onBackdrop);
+        return { overlay, close };
+    }
+};
+
 // 浮窗通知系统
 const Toast = (function() {
     // 创建或获取容器
@@ -14,52 +83,44 @@ const Toast = (function() {
         return container;
     }
 
-    // SVG 图标
-    const icons = {
-        success: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`,
-        error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>`,
-        info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
-        warning: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`
-    };
-
     // 显示浮窗
     function show(message, type = 'info', options = {}) {
         const container = getContainer();
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         if (type === 'error' || type === 'warning') toast.setAttribute('role', 'alert');
-        
+
         const duration = options.duration !== undefined ? options.duration : 3000;
         const title = options.title || '';
         const showClose = options.showClose !== false;
-        
-        let html = `<div class="toast-icon">${icons[type] || icons.info}</div>`;
+
+        let html = `<div class="toast-icon">${ICONS[type] || ICONS.info}</div>`;
         html += `<div class="toast-content">`;
         if (title) {
             html += `<span class="toast-title">${escapeHtml(title)}</span>`;
         }
         html += `<span class="toast-message">${escapeHtml(message)}</span></div>`;
-        
+
         if (showClose) {
-            html += `<button class="toast-close" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>`;
+            html += `<button class="toast-close" aria-label="关闭">${ICONS.close}</button>`;
         }
-        
+
         if (duration > 0) {
             html += '<div class="toast-progress"></div>';
         }
-        
+
         toast.innerHTML = html;
         container.appendChild(toast);
         // 可见堆叠上限 4 条，FIFO 关闭（走 removing 动画）
         const stack = container.querySelectorAll('.toast:not(.removing)');
         for (let i = 0; i < stack.length - 4; i++) dismiss(stack[i]);
-        
+
         // 关闭按钮事件
         const closeBtn = toast.querySelector('.toast-close');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => dismiss(toast));
         }
-        
+
         // 自动关闭 + 悬停暂停（追踪剩余时间，避免 mouseleave 重置寿命导致脱节）
         let timer = null;
         let remaining = duration;
@@ -67,7 +128,7 @@ const Toast = (function() {
         if (duration > 0) {
             timer = setTimeout(() => dismiss(toast), duration);
         }
-        
+
         toast.addEventListener('mouseenter', () => {
             if (timer) {
                 clearTimeout(timer);
@@ -82,21 +143,15 @@ const Toast = (function() {
                 timer = setTimeout(() => dismiss(toast), remaining);
             }
         });
-        
+
         return toast;
     }
-    
-    // 关闭浮窗
+
+    // 关闭浮窗（共享淡出拆除序列）
     function dismiss(toast) {
-        if (!toast || !toast.parentNode) return;
-        toast.classList.add('removing');
-        setTimeout(() => {
-            if (toast.parentNode) {
-                toast.parentNode.removeChild(toast);
-            }
-        }, 300);
+        _Dialog.fadeRemove(toast, 300);
     }
-    
+
     // 关闭所有浮窗
     function dismissAll() {
         const container = document.querySelector('.toast-container');
@@ -106,7 +161,7 @@ const Toast = (function() {
             setTimeout(() => dismiss(toast), index * 100);
         });
     }
-    
+
     return {
         show: show,
         success: (msg, opts) => show(msg, 'success', opts),
@@ -120,32 +175,26 @@ const Toast = (function() {
 
 // 确认对话框系统
 const Confirm = (function() {
-    // SVG 图标
-    const icons = {
-        danger: `<svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
-        warning: `<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`,
-        info: `<svg viewBox="0 0 24 24" fill="none" stroke="#0891B2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`
+    // 变体 → 图标（颜色由 .confirm-dialog.<type> .confirm-icon 的 CSS 设定）
+    const typeIcon = {
+        danger: ICONS.warning,       // 三角警示
+        warning: ICONS.alertCircle,  // 圆形警示
+        info: ICONS.info
     };
-    
+
     function show(message, options = {}) {
         return new Promise((resolve) => {
             const type = options.type || 'danger';
             const title = options.title || '确认操作';
             const confirmText = options.confirmText || '确定';
             const cancelText = options.cancelText || '取消';
-            const trigger = document.activeElement;
-            
-            // 创建遮罩层
-            const overlay = document.createElement('div');
-            overlay.className = 'confirm-overlay';
-            
-            // 创建对话框
+
+            // 创建对话框（overlay/ESC/遮罩/焦点/淡出 由 _Dialog.modal 接管）
             const dialog = document.createElement('div');
             dialog.className = `confirm-dialog ${type}`;
-            
             dialog.innerHTML = `
                 <div class="confirm-header">
-                    <div class="confirm-icon">${icons[type] || icons.info}</div>
+                    <div class="confirm-icon">${typeIcon[type] || typeIcon.info}</div>
                     <div class="confirm-title">${title}</div>
                 </div>
                 <div class="confirm-body">${message}</div>
@@ -154,56 +203,23 @@ const Confirm = (function() {
                     <button class="confirm-btn confirm-btn-confirm ${type}">${confirmText}</button>
                 </div>
             `;
-            
-            overlay.appendChild(dialog);
-            document.body.appendChild(overlay);
-            
-            // 按钮事件
+
+            const { close } = _Dialog.modal({
+                dialog,
+                onResult: resolve,
+                allowBackdropClose: !options.backdrop
+            });
+
+            // 默认聚焦取消按钮（安全默认：不意外触发破坏性操作）
             const cancelBtn = dialog.querySelector('.confirm-btn-cancel');
             const confirmBtn = dialog.querySelector('.confirm-btn-confirm');
             setTimeout(() => { if (cancelBtn) cancelBtn.focus(); }, 0);
-            
-            cancelBtn.addEventListener('click', () => {
-                cleanup();
-                resolve(false);
-            });
-            
-            confirmBtn.addEventListener('click', () => {
-                cleanup();
-                resolve(true);
-            });
-            
-            // 点击遮罩层关闭
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay && !options.backdrop) {
-                    cleanup();
-                    resolve(false);
-                }
-            });
-            
-            // ESC 键关闭
-            const handleEsc = (e) => {
-                if (e.key === 'Escape') {
-                    cleanup();
-                    resolve(false);
-                }
-            };
-            document.addEventListener('keydown', handleEsc);
-            
-            function cleanup() {
-                overlay.classList.add('removing');
-                dialog.classList.add('removing');
-                if (trigger && typeof trigger.focus === 'function') trigger.focus();
-                setTimeout(() => {
-                    if (overlay.parentNode) {
-                        overlay.parentNode.removeChild(overlay);
-                    }
-                    document.removeEventListener('keydown', handleEsc);
-                }, 200);
-            }
+
+            cancelBtn.addEventListener('click', () => close(false));
+            confirmBtn.addEventListener('click', () => close(true));
         });
     }
-    
+
     return {
         show: show
     };
@@ -211,12 +227,12 @@ const Confirm = (function() {
 
 // 输入对话框系统
 const Prompt = (function() {
-    // SVG 图标
-    const icons = {
-        info: `<svg viewBox="0 0 24 24" fill="none" stroke="#0891B2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
-        success: `<svg viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`
+    // 变体 → 图标
+    const typeIcon = {
+        info: ICONS.info,
+        success: ICONS.success
     };
-    
+
     function show(message, options = {}) {
         return new Promise((resolve) => {
             const type = options.type || 'info';
@@ -226,19 +242,13 @@ const Prompt = (function() {
             const placeholder = options.placeholder || '';
             const defaultValue = options.defaultValue || '';
             const maxLength = options.maxLength || 255;
-            const trigger = document.activeElement;
-            
-            // 创建遮罩层
-            const overlay = document.createElement('div');
-            overlay.className = 'confirm-overlay';
-            
-            // 创建对话框
+
+            // 创建对话框（overlay/ESC/遮罩/焦点/淡出 由 _Dialog.modal 接管）
             const dialog = document.createElement('div');
             dialog.className = `confirm-dialog prompt-dialog ${type}`;
-            
             dialog.innerHTML = `
                 <div class="confirm-header">
-                    <div class="confirm-icon">${icons[type] || icons.info}</div>
+                    <div class="confirm-icon">${typeIcon[type] || typeIcon.info}</div>
                     <div class="confirm-title">${title}</div>
                 </div>
                 <div class="confirm-body">
@@ -252,77 +262,38 @@ const Prompt = (function() {
                     <button class="confirm-btn confirm-btn-confirm ${type}">${confirmText}</button>
                 </div>
             `;
-            
-            overlay.appendChild(dialog);
-            document.body.appendChild(overlay);
-            
-            // 获取输入框
+
+            // dismissValue=null 保持 Prompt 的原有契约（取消/ESC/遮罩 → null）
+            const { close } = _Dialog.modal({
+                dialog,
+                onResult: resolve,
+                allowBackdropClose: !options.backdrop,
+                dismissValue: null
+            });
+
             const input = dialog.querySelector('.prompt-input');
-            
-            // 聚焦输入框
+
+            // 聚焦输入框（有默认值则全选）
             setTimeout(() => {
                 input.focus();
                 if (defaultValue) {
                     input.select();
                 }
             }, 0);
-            
-            // 按钮事件
+
             const cancelBtn = dialog.querySelector('.confirm-btn-cancel');
             const confirmBtn = dialog.querySelector('.confirm-btn-confirm');
-            
-            cancelBtn.addEventListener('click', () => {
-                cleanup();
-                resolve(null);
-            });
-            
-            confirmBtn.addEventListener('click', () => {
-                const value = input.value.trim();
-                cleanup();
-                resolve(value);
-            });
-            
+
+            cancelBtn.addEventListener('click', () => close(null));
+            confirmBtn.addEventListener('click', () => close(input.value.trim()));
+
             // 回车键确认
             input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    const value = input.value.trim();
-                    cleanup();
-                    resolve(value);
-                }
+                if (e.key === 'Enter') close(input.value.trim());
             });
-            
-            // 点击遮罩层关闭
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay && !options.backdrop) {
-                    cleanup();
-                    resolve(null);
-                }
-            });
-            
-            // ESC 键关闭
-            const handleEsc = (e) => {
-                if (e.key === 'Escape') {
-                    cleanup();
-                    resolve(null);
-                }
-            };
-            document.addEventListener('keydown', handleEsc);
-            
-            function cleanup() {
-                overlay.classList.add('removing');
-                dialog.classList.add('removing');
-                if (trigger && typeof trigger.focus === 'function') trigger.focus();
-                setTimeout(() => {
-                    if (overlay.parentNode) {
-                        overlay.parentNode.removeChild(overlay);
-                    }
-                    document.removeEventListener('keydown', handleEsc);
-                }, 200);
-            }
-            
         });
     }
-    
+
     return {
         show: show
     };
@@ -852,13 +823,7 @@ function ensureLogWindowMarkup() {
     const toggleBtn = document.createElement('div');
     toggleBtn.innerHTML = `
         <button type="button" id="log-toggle-btn" class="log-toggle-btn" onclick="toggleLogWindow()" aria-label="显示/隐藏日志" aria-controls="log-float-window" aria-expanded="false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
+            ${ICONS.logToggle}
             <span class="log-toggle-badge" id="log-toggle-badge" style="display: none;"></span>
         </button>
     `;
@@ -869,23 +834,15 @@ function ensureLogWindowMarkup() {
         <div id="log-float-window" class="log-float-window" style="display: none;" role="dialog" aria-labelledby="log-float-title">
             <div class="log-float-header" id="log-float-header">
                 <div class="log-float-title">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                    </svg>
+                    ${ICONS.logTitle}
                     <span id="log-float-title">系统日志</span>
                 </div>
                 <div class="log-float-controls">
                     <button type="button" class="log-float-minimize-btn" onclick="minimizeLogWindow()" aria-label="最小化" title="最小化">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
+                        ${ICONS.minimize}
                     </button>
                     <button type="button" class="log-float-close-btn" onclick="toggleLogWindow()" aria-label="关闭" title="关闭">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
+                        ${ICONS.close}
                     </button>
                 </div>
             </div>
@@ -1066,7 +1023,7 @@ function minimizeLogWindow() {
     if (logWindowMinimized) {
         logWindow.classList.add('minimized');
         if (minimizeBtn) {
-            minimizeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+            minimizeBtn.innerHTML = ICONS.restore;
         }
     } else {
         logWindow.classList.remove('minimized');
@@ -1074,7 +1031,7 @@ function minimizeLogWindow() {
         persistLogHistory();
         updateLogBadge();
         if (minimizeBtn) {
-            minimizeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+            minimizeBtn.innerHTML = ICONS.minimize;
         }
     }
 
