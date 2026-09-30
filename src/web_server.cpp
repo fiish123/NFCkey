@@ -120,6 +120,13 @@ static AsyncWebServerRequest *jsonBodyRequest = nullptr;
 static bool wifiTestRunning = false;
 static uint32_t wifiTestRequestId = 0; // 请求ID
 
+// 最近一次 wifi/test 的结果。测试过程中设备会断开当前 WiFi（WebSocket 会掉线），
+// 前端可能错过 wifi/testResult 事件，所以把结果留在 http://x/ wifi/testStatus 里供轮询。
+static bool wifiTestHasResult = false;
+static bool wifiTestLastSuccess = false;
+static const char *wifiTestLastIp = "";
+static const char *wifiTestLastError = "";
+
 // WiFi扫描状态管理
 static bool wifiScanRunning = false;
 static bool restartScheduled = false;
@@ -737,6 +744,21 @@ static void sendSuccessResponse(AsyncWebServerRequest *request)
 }
 
 /**
+ * @brief 发送裸 JSON 响应（不加 {success,message,data} 信封）。
+ *
+ * WebUI（webui/）的读取接口直接读顶层字段（如 data.cards、data.files、data.voltage），
+ * 没有拆信封的逻辑，所以这些 GET 接口必须返回裸对象——与 /api/wifi/status|scan
+ * 的处理方式保持一致。写操作（POST/PUT/DELETE）仍然用 sendSuccessResponse。
+ */
+static void sendRawJson(AsyncWebServerRequest *request, const JsonDocument &doc)
+{
+    String response;
+    response.reserve(measureJson(doc));
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+}
+
+/**
  * @brief 发送错误响应。message 经 appendJsonString 安全转义后内联，无需 JsonDocument。
  */
 static void sendErrorResponse(AsyncWebServerRequest *request, int code, const String &message)
@@ -888,9 +910,10 @@ static void sendWsError(AsyncWebSocketClient *client, const String &action,
         response += ",\"requestId\":";
         response += requestId;
     }
-    response += ",\"data\":{\"message\":";
+    // 前端 useWebSocket.ts 读取顶层 error 字段（message.error）
+    response += ",\"error\":";
     appendJsonString(response, message.c_str());
-    response += "}}";
+    response += "}";
     client->text(response);
 }
 
@@ -959,8 +982,9 @@ void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req)
     uint32_t requestId = req["requestId"] | 0;
     const bool hasLastLogId = !req["lastLogId"].isNull();
     const uint32_t requestedLastLogId = hasLastLogId ? req["lastLogId"].as<uint32_t>() : 0;
-    const bool hasRequestedSessionId = !req["sessionId"].isNull();
-    const uint32_t requestedSessionId = hasRequestedSessionId ? req["sessionId"].as<uint32_t>() : 0;
+    // 前端 useLogger.ts 发送的是 lastSessionId
+    const bool hasRequestedSessionId = !req["lastSessionId"].isNull();
+    const uint32_t requestedSessionId = hasRequestedSessionId ? req["lastSessionId"].as<uint32_t>() : 0;
     const bool sessionChanged = hasRequestedSessionId && requestedSessionId != 0 && requestedSessionId != logSessionId;
     LogEntry selectedLogs[LOG_REPLAY_MAX_BATCH_SIZE];
     size_t selectedLogCount = 0;
@@ -1073,10 +1097,14 @@ void handleWsLogReplay(AsyncWebSocketClient *client, const JsonDocument &req)
 void handleWsWifiGetInfo(AsyncWebSocketClient *client, const JsonDocument &req)
 {
     JsonDocument data;
-    data["ssid"] = WiFi.SSID().c_str();
-    data["ip"] = WiFi.localIP().toString();
-    data["rssi"] = WiFi.RSSI();
-    data["mode"] = WiFi.getMode() == WIFI_AP ? "AP" : "STA";
+    const bool apMode = (WiFi.getMode() == WIFI_MODE_AP || WiFi.getMode() == WIFI_MODE_APSTA);
+    data["ssid"] = apMode ? AP_SSID : WiFi.SSID().c_str();
+    data["ip"] = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+    data["rssi"] = apMode ? 0 : WiFi.RSSI();
+    data["mode"] = apMode ? "AP" : "STA";
+    // 与 REST /api/wifi/status 保持一致：AP 模式下有客户端接入即视为已连接，
+    // 否则 WebUI 首页/WiFi 页会一直显示“未连接”
+    data["connected"] = apMode ? (WiFi.softAPgetStationNum() > 0) : (WiFi.status() == WL_CONNECTED);
     sendWsResponse(client, "wifi/getInfo", true, &data, req["requestId"]);
 }
 
@@ -1350,6 +1378,14 @@ void wifiTestTask(void *pvParameters)
         dataObj["errorMessage"] = errorMessage; // errorMessage 指向静态字面量
     }
 
+    // 记录结果，供 wifi/testStatus 轮询（WebSocket 在测试期间可能掉线）
+    wifiTestHasResult = true;
+    wifiTestLastSuccess = wifisuccess;
+    wifiTestLastError = errorMessage;
+    static String wifiTestIpHolder; // 保存 IP 字符串的生命周期
+    wifiTestIpHolder = wifisuccess ? WiFi.localIP().toString() : String();
+    wifiTestLastIp = wifiTestIpHolder.c_str();
+
     // 断开测试网络
     WiFi.disconnect(true);
 
@@ -1428,6 +1464,7 @@ void handleWsWifiTest(AsyncWebSocketClient *client, const JsonDocument &req)
     params->password = password;
 
     wifiTestRunning = true;
+    wifiTestHasResult = false; // 新一轮测试，清掉上一次的结论
     wifiTestRequestId = requestId;
 
     // 立即回复已开始
@@ -1454,9 +1491,11 @@ void handleWsWifiTestStatus(AsyncWebSocketClient *client, const JsonDocument &re
     uint32_t requestId = req["requestId"] | 0;
     JsonDocument data;
     data["running"] = wifiTestRunning;
-    data["success"] = false;
-    data["ip"] = "";
-    data["errorMessage"] = "";
+    // 返回最近一次测试的业务结果，前端在 WebSocket 掉线重连后仍能拿到结论
+    data["hasResult"] = wifiTestHasResult;
+    data["success"] = wifiTestHasResult && wifiTestLastSuccess;
+    data["ip"] = wifiTestLastIp;
+    data["errorMessage"] = wifiTestLastError;
     sendWsResponse(client, "wifi/testStatus", true, &data, requestId);
 }
 
@@ -1607,7 +1646,17 @@ void handleGetBatteryInfo(AsyncWebServerRequest *request)
     JsonDocument doc;
     doc["voltage"] = round(voltage * 100) / 100;
     doc["status"] = voltage > 3.4 ? "normal" : (voltage > 3.2 ? "low" : "critical");
-    sendSuccessResponse(request, doc);
+
+    // WebUI 用单节锂电的粗略区间换算百分比（3.2V=0%，4.2V=100%），
+    // 与提示音阈值（>3.4 正常 / >3.2 低）保持同一套区间。
+    int percentage = (int)roundf((voltage - 3.2f) / (4.2f - 3.2f) * 100.0f);
+    if (percentage < 0)
+        percentage = 0;
+    if (percentage > 100)
+        percentage = 100;
+    doc["percentage"] = percentage;
+
+    sendRawJson(request, doc);
 }
 
 /**
@@ -1623,13 +1672,20 @@ void handleGetSystemInfo(AsyncWebServerRequest *request)
     snprintf(chipIdStr, sizeof(chipIdStr), "%016llX", chipId);
     doc["chipId"] = chipIdStr;
     doc["version"] = serverConfig.firmwareVersion;
+    // WebUI OTA 页需要的内存/容量信息（单位：字节）
+    doc["flashSize"] = ESP.getFlashChipSize();
+    doc["freeHeap"] = ESP.getFreeHeap();
+    doc["sketchSize"] = ESP.getSketchSize();
+    doc["freeSketchSpace"] = ESP.getFreeSketchSpace();
     doc["otaHashAlgorithm"] = "sha256";
     doc["otaHashHeader"] = OTA_HASH_HEADER;
     doc["otaHashRequired"] = false;
     doc["fileHashAlgorithm"] = "sha256";
     doc["fileHashHeader"] = FILE_HASH_HEADER;
-    doc["fileHashRequired"] = true;
-    sendSuccessResponse(request, doc);
+    // WebUI 在 http 明文环境下拿不到 crypto.subtle，无法计算文件哈希，
+    // 因此文件上传的哈希改为可选（提供则校验）
+    doc["fileHashRequired"] = false;
+    sendRawJson(request, doc);
 }
 
 /**
@@ -1642,17 +1698,15 @@ void handleGetFileSystemInfo(AsyncWebServerRequest *request)
     uint64_t usedBytes = LittleFS.usedBytes();
     uint64_t freeBytes = totalBytes - usedBytes;
 
-    uint32_t totalKB = totalBytes / 1024;
-    uint32_t usedKB = usedBytes / 1024;
-    uint32_t freeKB = freeBytes / 1024;
     uint32_t freePercent = totalBytes > 0 ? (freeBytes * 100) / totalBytes : 0;
 
+    // WebUI 用 formatSize() 按字节格式化，因此这里直接给字节数（不再换算成 KB）
     JsonDocument doc;
-    doc["total"] = totalKB;
-    doc["used"] = usedKB;
-    doc["free"] = freeKB;
+    doc["total"] = totalBytes;
+    doc["used"] = usedBytes;
+    doc["free"] = freeBytes;
     doc["freePercent"] = freePercent;
-    sendSuccessResponse(request, doc);
+    sendRawJson(request, doc);
 }
 
 /**
@@ -1676,8 +1730,10 @@ void handleListFiles(AsyncWebServerRequest *request)
         return;
     }
 
+    // WebUI 读 data.files，因此返回 {path, files:[...]}（裸 JSON，无信封）
     JsonDocument doc;
-    JsonArray array = doc.to<JsonArray>();
+    doc["path"] = path;
+    JsonArray array = doc["files"].to<JsonArray>();
     File entry = dir.openNextFile();
     while (entry)
     {
@@ -1690,7 +1746,7 @@ void handleListFiles(AsyncWebServerRequest *request)
         entry = dir.openNextFile();
     }
     dir.close();
-    sendSuccessResponse(request, doc);
+    sendRawJson(request, doc);
 }
 
 /**
@@ -1725,13 +1781,16 @@ void handleCreateDirectory(AsyncWebServerRequest *request)
  */
 void handleDeleteResource(AsyncWebServerRequest *request)
 {
-    String path;
-    if (!getPathParam(request, "path", false, "/", path))
+    // WebUI 用 DELETE /api/files/<path>，路径在 URL 上
+    String path = request->url().substring(strlen("/api/files"));
+    if (path.isEmpty() || path == "/")
     {
-        sendErrorResponse(request, 400, "无效路径");
+        LOG_W("文件删除失败: 请求未指定路径");
+        sendErrorResponse(request, 400, "缺少路径参数");
         return;
     }
-    LOG_D("HTTP DELETE /api/files?path=%s", path.c_str());
+    path = normalizePath(path);
+    LOG_D("HTTP DELETE /api/files%s", path.c_str());
 
     if (isProtectedRuntimeFile(path))
     {
@@ -1779,19 +1838,19 @@ void handleDeleteResource(AsyncWebServerRequest *request)
 }
 
 /**
- * @brief 处理GET /api/files/download，下载文件。
- * @param request 必须包含"path"参数（URL参数）
+ * @brief 处理 GET /api/files/<path>：WebUI 的下载按钮用的是
+ *        window.open('/api/files' + fullPath + '?download=1')，路径在 URL 上。
  */
 void handleDownloadFile(AsyncWebServerRequest *request)
 {
-    String path;
-    if (!getPathParam(request, "path", false, "/", path))
+    String path = request->url().substring(strlen("/api/files"));
+    if (path.isEmpty() || path == "/")
     {
-        LOG_D("HTTP GET /api/files/download 无效路径");
-        sendErrorResponse(request, 400, "无效路径");
+        sendErrorResponse(request, 400, "缺少路径参数");
         return;
     }
-    LOG_D("GET /api/files/download 请求，路径: %s", path.c_str());
+    path = normalizePath(path);
+    LOG_D("GET 下载请求，路径: %s", path.c_str());
 
     File file = LittleFS.open(path, "r");
     if (!file)
@@ -1917,7 +1976,11 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         resetFileUploadState(); // 确保清理之前的状态
         uploadState.active = true;
 
-        String reqPath = request->hasParam("path") ? request->getParam("path")->value() : "/";
+        // WebUI 把目标目录放在 multipart 表单字段 path 中（POST 参数）
+        String reqPath = "/";
+        if (request->hasParam("path", true))
+            reqPath = request->getParam("path", true)->value();
+
         uploadState.path = normalizePath(reqPath);
         if (!uploadState.path.endsWith("/"))
             uploadState.path += "/";
@@ -1971,28 +2034,30 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
             uploadState.expectedSha256.toLowerCase();
         }
 
-        if (uploadState.expectedSha256.isEmpty())
+        // 哈希可选：WebUI 在 http 明文环境拿不到 crypto.subtle，无法计算 SHA-256。
+        // 提供了就校验（旧版网页/脚本仍然带 X-File-SHA256），没提供就跳过完整性校验，
+        // 与 OTA 的 otaHashRequired=false 保持一致。
+        if (!uploadState.expectedSha256.isEmpty())
         {
-            LOG_W("文件上传失败: 缺少文件哈希");
-            uploadState.error = true;
-            uploadState.hashFormatInvalid = true;
-            return;
-        }
+            uploadState.hashProvided = true;
+            if (!isLowerHexString(uploadState.expectedSha256, OTA_SHA256_HEX_LENGTH))
+            {
+                LOG_W("文件上传失败: 文件哈希格式无效");
+                uploadState.error = true;
+                uploadState.hashFormatInvalid = true;
+                return;
+            }
 
-        uploadState.hashProvided = true;
-        if (!isLowerHexString(uploadState.expectedSha256, OTA_SHA256_HEX_LENGTH))
-        {
-            LOG_W("文件上传失败: 文件哈希格式无效");
-            uploadState.error = true;
-            uploadState.hashFormatInvalid = true;
-            return;
+            if (!beginFileUploadHashContext())
+            {
+                LOG_E("文件上传失败: 无法初始化哈希上下文");
+                uploadState.error = true;
+                return;
+            }
         }
-
-        if (!beginFileUploadHashContext())
+        else
         {
-            LOG_E("文件上传失败: 无法初始化哈希上下文");
-            uploadState.error = true;
-            return;
+            LOG_I("文件上传未提供 %s，跳过哈希校验", FILE_HASH_HEADER);
         }
 
         uploadState.file = LittleFS.open(fileUploadTempPath, "w");
@@ -2019,7 +2084,7 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
             return;
         }
 
-        if (!updateFileUploadHashContext(data, len))
+        if (uploadState.hashProvided && !updateFileUploadHashContext(data, len))
         {
             LOG_E("文件上传失败: 哈希计算错误，已删除临时文件");
             uploadState.file.close();
@@ -2037,25 +2102,28 @@ void handleUploadFile(AsyncWebServerRequest *request, String filename, size_t in
         uploadState.finalSeen = true;
 
         String calculatedSha256;
-        if (!finalizeFileUploadHash(calculatedSha256))
+        if (uploadState.hashProvided)
         {
-            LOG_E("文件上传失败: 无法完成哈希校验");
-            if (uploadState.file)
-                uploadState.file.close();
-            cleanupFileUploadTempFile();
-            uploadState.error = true;
-            return;
-        }
+            if (!finalizeFileUploadHash(calculatedSha256))
+            {
+                LOG_E("文件上传失败: 无法完成哈希校验");
+                if (uploadState.file)
+                    uploadState.file.close();
+                cleanupFileUploadTempFile();
+                uploadState.error = true;
+                return;
+            }
 
-        if (calculatedSha256 != uploadState.expectedSha256)
-        {
-            LOG_E("文件上传失败: 哈希校验不匹配");
-            if (uploadState.file)
-                uploadState.file.close();
-            cleanupFileUploadTempFile();
-            uploadState.hashMismatch = true;
-            uploadState.error = true;
-            return;
+            if (calculatedSha256 != uploadState.expectedSha256)
+            {
+                LOG_E("文件上传失败: 哈希校验不匹配");
+                if (uploadState.file)
+                    uploadState.file.close();
+                cleanupFileUploadTempFile();
+                uploadState.hashMismatch = true;
+                uploadState.error = true;
+                return;
+            }
         }
 
         if (uploadState.file)
@@ -2150,7 +2218,7 @@ void handleGetServoConfig(AsyncWebServerRequest *request)
     JsonDocument doc;
     doc["unlock"] = unlock;
     doc["lock"] = lock;
-    sendSuccessResponse(request, doc);
+    sendRawJson(request, doc);
 }
 
 /**
@@ -2292,18 +2360,54 @@ void handleRestartSystem(AsyncWebServerRequest *request)
  * @param len      数据长度
  * @param final    是否为最后一块
  */
+/**
+ * @brief 广播 OTA 进度到所有 WebSocket 客户端
+ */
+static void broadcastOtaProgress(const char* stage, int progress, const char* message = nullptr)
+{
+    if (ws == nullptr || !isWebServerRunning())
+        return;
+
+    JsonDocument doc;
+    doc["action"] = "ota/progress";
+    doc["stage"] = stage;
+    doc["progress"] = progress;
+    if (message != nullptr)
+    {
+        doc["message"] = message;
+    }
+
+    char buffer[256];
+    size_t len = serializeJson(doc, buffer, sizeof(buffer));
+    if (len > 0 && len < sizeof(buffer))
+    {
+        broadcastWsTextBuffer(buffer, len);
+    }
+}
+
 void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t index,
                      uint8_t *data, size_t len, bool final)
 {
+    static size_t totalWritten = 0;
+    static size_t totalSize = 0;
+    
     if (!index)
     {
         resetOtaUploadState();
         otaUploadState.active = true;
-        LOG_I("OTA固件更新开始: %s (大小: %u bytes)", filename.c_str(), request->contentLength());
-        if (!validateOtaFileSize(request->contentLength()))
+        totalWritten = 0;
+        totalSize = request->contentLength();
+        
+        LOG_I("OTA固件更新开始: %s (大小: %u bytes)", filename.c_str(), totalSize);
+        
+        // 广播开始写入阶段
+        broadcastOtaProgress("write", 0, "开始写入 Flash");
+        
+        if (!validateOtaFileSize(totalSize))
         {
             otaUploadState.error = true;
             LOG_E("OTA更新失败: 固件大小超限 (最大2MB)");
+            broadcastOtaProgress("write", 0, "错误: 固件大小超限");
             Update.abort();
             return;
         }
@@ -2311,6 +2415,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
         {
             otaUploadState.error = true;
             Update.printError(Serial);
+            broadcastOtaProgress("write", 0, "错误: 无法开始更新");
             Update.abort();
             return;
         }
@@ -2328,6 +2433,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
                 {
                     otaUploadState.hashFormatInvalid = true;
                     otaUploadState.error = true;
+                    broadcastOtaProgress("write", 0, "错误: 哈希格式无效");
                     Update.abort();
                     return;
                 }
@@ -2335,6 +2441,7 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
                 if (!beginOtaHashContext())
                 {
                     otaUploadState.error = true;
+                    broadcastOtaProgress("write", 0, "错误: 无法初始化哈希");
                     Update.abort();
                     return;
                 }
@@ -2346,22 +2453,40 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
     {
         otaUploadState.error = true;
         Update.printError(Serial);
+        broadcastOtaProgress("write", 0, "错误: 写入 Flash 失败");
         Update.abort();
         return;
     }
+
+    totalWritten += len;
 
     if (otaUploadState.hashProvided && len > 0 && !updateOtaHashContext(data, len))
     {
         otaUploadState.error = true;
+        broadcastOtaProgress("write", 0, "错误: 哈希计算失败");
         Update.abort();
         return;
     }
 
-    esp_task_wdt_reset();
+    // 每 32KB 推送一次进度，避免频繁推送
+    if ((totalWritten % 32768) == 0 || final)
+    {
+        int progress = totalSize > 0 ? (totalWritten * 100 / totalSize) : 0;
+        broadcastOtaProgress("write", progress, "正在写入 Flash");
+    }
+
+    // 每 64KB 重置看门狗
+    if ((totalWritten % 65536) == 0)
+    {
+        esp_task_wdt_reset();
+    }
 
     if (final)
     {
         otaUploadState.finalSeen = true;
+
+        // 广播验证阶段开始
+        broadcastOtaProgress("verify", 0, "开始验证固件");
 
         if (otaUploadState.hashProvided)
         {
@@ -2369,31 +2494,51 @@ void handleOtaUpdate(AsyncWebServerRequest *request, String filename, size_t ind
             if (!finalizeOtaHash(calculatedSha256))
             {
                 otaUploadState.error = true;
+                broadcastOtaProgress("verify", 0, "错误: 哈希计算失败");
                 Update.abort();
                 return;
             }
+
+            broadcastOtaProgress("verify", 50, "正在校验哈希");
 
             if (calculatedSha256 != otaUploadState.expectedSha256)
             {
                 otaUploadState.hashMismatch = true;
                 otaUploadState.error = true;
+                broadcastOtaProgress("verify", 0, "错误: 哈希校验失败");
                 Update.abort();
                 return;
             }
         }
 
+        broadcastOtaProgress("verify", 90, "正在完成写入");
+
         if (Update.end(true))
         {
             otaUploadState.success = true;
             LOG_I("OTA固件更新成功，系统即将重启");
+            
+            // 广播验证完成
+            broadcastOtaProgress("verify", 100, "固件验证成功");
+            
+            // 广播重启阶段
+            delay(100); // 确保消息发送
+            broadcastOtaProgress("reboot", 100, "设备即将重启");
         }
         else
         {
             otaUploadState.error = true;
             Update.printError(Serial);
+            broadcastOtaProgress("verify", 0, "错误: 固件验证失败");
             Update.abort();
         }
+        
+        // 重置计数器
+        totalWritten = 0;
+        totalSize = 0;
     }
+
+    esp_task_wdt_reset();
 }
 
 /**
@@ -2452,9 +2597,13 @@ void handleGetCardsList(AsyncWebServerRequest *request)
         char uidStr[9];
         snprintf(uidStr, sizeof(uidStr), "%02X%02X%02X%02X", card.uid[0], card.uid[1], card.uid[2], card.uid[3]);
         cardObj["uid"] = uidStr;
+
+        // WebUI 用 type 显示卡片类型：固件只能从 UID 长度区分
+        // 4 字节 → MIFARE，7 字节 → UID，其他 → 其他
+        cardObj["type"] = (card.uidLength == 4) ? 0 : (card.uidLength == 7 ? 1 : 3);
     }
 
-    sendSuccessResponse(request, doc);
+    sendRawJson(request, doc);
     LOG_D("卡片列表查询完成: 共%d张", authorizedCards.size());
 }
 
@@ -2535,26 +2684,105 @@ void handleAddCard(AsyncWebServerRequest *request, uint8_t *data, size_t len, si
 }
 
 /**
- * @brief 处理DELETE /api/cards，删除指定卡片
+ * @brief 处理 PUT /api/cards/{uid} - 更新卡片（重命名）
  */
-void handleDeleteCard(AsyncWebServerRequest *request)
+static void handleUpdateCard(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
 {
-    if (!request->hasParam("uid"))
+    static String requestBody;
+    
+    if (index == 0)
     {
-        sendErrorResponse(request, 400, "缺少uid参数");
+        requestBody = "";
+        requestBody.reserve(total);
+    }
+    
+    for (size_t i = 0; i < len; i++)
+    {
+        requestBody += (char)data[i];
+    }
+    
+    if (index + len != total)
+    {
         return;
     }
+    
+    // 从 URL 路径提取 UID
+    String path = request->url();
+    int lastSlash = path.lastIndexOf('/');
+    String uid = path.substring(lastSlash + 1);
+    
+    LOG_D("HTTP PUT /api/cards/%s", uid.c_str());
+    
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, requestBody);
+    
+    if (error)
+    {
+        sendErrorResponse(request, 400, "JSON 解析失败");
+        return;
+    }
+    
+    String newName = doc["name"] | "";
+    
+    if (newName.isEmpty())
+    {
+        sendErrorResponse(request, 400, "名称不能为空");
+        return;
+    }
+    
+    // 查找并更新卡片
+    bool found = false;
+    for (auto &card : authorizedCards)
+    {
+        char existingUid[9];
+        snprintf(existingUid, sizeof(existingUid), "%02X%02X%02X%02X", 
+                 card.uid[0], card.uid[1], card.uid[2], card.uid[3]);
+        
+        if (uid.equalsIgnoreCase(existingUid))
+        {
+            card.name = newName;
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found)
+    {
+        sendErrorResponse(request, 404, "未找到该卡片");
+        return;
+    }
+    
+    if (saveCardsToFile())
+    {
+        LOG_I("卡片重命名成功: UID=%s, 新名称=%s", uid.c_str(), newName.c_str());
+        sendSuccessResponse(request);
+    }
+    else
+    {
+        sendErrorResponse(request, 500, "保存失败");
+    }
+}
 
-    String uid = request->getParam("uid")->value();
-    LOG_D("HTTP DELETE /api/cards?uid=%s", uid.c_str());
-
+/**
+ * @brief 处理 DELETE /api/cards/{uid} - 通过路径参数删除卡片
+ */
+void handleDeleteCardByUid(AsyncWebServerRequest *request)
+{
+    // 从 URL 路径提取 UID
+    String path = request->url();
+    int lastSlash = path.lastIndexOf('/');
+    String uid = path.substring(lastSlash + 1);
+    
+    LOG_D("HTTP DELETE /api/cards/%s", uid.c_str());
+    
     bool found = false;
     auto it = authorizedCards.begin();
     while (it != authorizedCards.end())
     {
         char existingUid[9];
-        snprintf(existingUid, sizeof(existingUid), "%02X%02X%02X%02X", it->uid[0], it->uid[1], it->uid[2], it->uid[3]);
-
+        snprintf(existingUid, sizeof(existingUid), "%02X%02X%02X%02X", 
+                 it->uid[0], it->uid[1], it->uid[2], it->uid[3]);
+        
         if (uid.equalsIgnoreCase(existingUid))
         {
             authorizedCards.erase(it);
@@ -2563,13 +2791,13 @@ void handleDeleteCard(AsyncWebServerRequest *request)
         }
         it++;
     }
-
+    
     if (!found)
     {
         sendErrorResponse(request, 404, "未找到该卡片");
         return;
     }
-
+    
     if (saveCardsToFile())
     {
         LOG_I("授权卡片删除成功: UID=%s", uid.c_str());
@@ -2624,8 +2852,9 @@ void handleReadCard(AsyncWebServerRequest *request)
     snprintf(uidStr, sizeof(uidStr), "%02X%02X%02X%02X", readResult.uid[0], readResult.uid[1], readResult.uid[2], readResult.uid[3]);
     doc["uid"] = uidStr;
     doc["length"] = readResult.uidLength;
+    doc["type"] = (readResult.uidLength == 4) ? 0 : (readResult.uidLength == 7 ? 1 : 3);
 
-    sendSuccessResponse(request, doc);
+    sendRawJson(request, doc);
     LOG_I("NFC卡片读取成功: UID=%s", uidStr);
 }
 
@@ -2748,7 +2977,8 @@ void handleSetCardLogicConfig(AsyncWebServerRequest *request, uint8_t *data, siz
  * @param path       原始文件路径（如 "/web/index.html"）
  * @param contentType MIME 类型（如 "text/html; charset=utf-8"）
  */
-void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, const String &contentType)
+void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, const String &contentType,
+                          const char *cacheControl = "no-cache")
 {
     String gzPath = path + ".gz";
 
@@ -2767,7 +2997,7 @@ void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, co
         LOG_D("静态资源命中gzip版本: %s", gzPath.c_str());
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, gzPath, contentType);
         response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Cache-Control", "public, max-age=1800");
+        response->addHeader("Cache-Control", cacheControl);
         request->send(response);
         return;
     }
@@ -2776,94 +3006,157 @@ void servePrecompiledFile(AsyncWebServerRequest *request, const String &path, co
     {
         LOG_D("静态资源命中原始版本: %s", path.c_str());
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, path, contentType);
-        response->addHeader("Cache-Control", "public, max-age=1800");
+        response->addHeader("Cache-Control", cacheControl);
         request->send(response);
     }
     else
     {
-        LOG_W("静态资源不存在: %s", path.c_str());
+        // 注意：这里必须是 404 而不是 index.html，否则浏览器会拿到 text/html 的
+        // JS/CSS（模块脚本 MIME 校验失败 → 白屏）。
+        LOG_W("静态资源不存在: %s (客户端Accept-Encoding gzip=%s)", path.c_str(), acceptGzip ? "是" : "否");
         request->send(404, "text/plain", "File not found");
     }
 }
 
 /**
- * @brief 注册静态资源路由（CSS、JS），支持预压缩 gzip。
- * @param server AsyncWebServer指针
+ * @brief 注册静态资源路由（WebUI 构建产物 - 仅 gzip 压缩文件）
+ * WebUI 是单页应用（SPA），所有资源使用预压缩的 .gz 文件
+ *
+ * 重要：本工程未定义 ASYNCWEBSERVER_REGEX，ESPAsyncWebServer 3.x 不会把
+ * "^...$" 当正则解析，而是当成普通路径精确/前缀比较，因此绝不能写成
+ * "^\\/assets\\/(.+)$" —— 那样永远匹配不到，请求会落到 onNotFound 返回
+ * index.html（text/html），浏览器拒绝执行模块脚本，页面白屏。
+ * "/assets/*" 才是前缀匹配（匹配 /assets/ 下的任意层级文件）。
  */
 void registerStaticRoutes(AsyncWebServer *server)
 {
-    server->on("/web/css/style.css", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/css/style.css", "text/css"); });
-    server->on("/web/css/pages.css", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/css/pages.css", "text/css"); });
-    server->on("/web/js/common.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/common.js", "application/javascript"); });
-    server->on("/web/js/vendor/fflate.bundle", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/vendor/fflate.bundle", "application/javascript"); });
-    server->on("/web/js/pages/index.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/index.js", "application/javascript"); });
-    server->on("/web/js/pages/wifi.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/wifi.js", "application/javascript"); });
-    server->on("/web/js/pages/files.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/files.js", "application/javascript"); });
-    server->on("/web/js/pages/servo.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/servo.js", "application/javascript"); });
-    server->on("/web/js/pages/ota.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/ota.js", "application/javascript"); });
-    server->on("/web/js/pages/cards.js", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/js/pages/cards.js", "application/javascript"); });
+    server->on("/assets/*", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+        const String path = request->url();
+
+        // 目录请求（如 /assets/）没有对应文件，直接 404，
+        // 否则 beginResponse 打开目录会返回 500 并关闭连接
+        if (path.endsWith("/"))
+        {
+            request->send(404, "text/plain", "File not found");
+            return;
+        }
+
+        // 模块脚本的 MIME 必须是 JavaScript，否则浏览器按 HTML 规范严格校验会拒绝执行
+        const char *mimeType = "application/octet-stream";
+        if (path.endsWith(".js") || path.endsWith(".mjs"))
+            mimeType = "application/javascript";
+        else if (path.endsWith(".css"))
+            mimeType = "text/css";
+        else if (path.endsWith(".json") || path.endsWith(".map"))
+            mimeType = "application/json";
+        else if (path.endsWith(".svg"))
+            mimeType = "image/svg+xml";
+        else if (path.endsWith(".png"))
+            mimeType = "image/png";
+        else if (path.endsWith(".webp"))
+            mimeType = "image/webp";
+        else if (path.endsWith(".ico"))
+            mimeType = "image/x-icon";
+        else if (path.endsWith(".woff2"))
+            mimeType = "font/woff2";
+
+        // 将 /assets/xxx 转换为 /web/assets/xxx
+        // 文件名带内容哈希，可以长期强缓存
+        servePrecompiledFile(request, "/web" + path, mimeType, "public, max-age=31536000, immutable");
+    });
+
+    // 图标：构建产物里可能只有原始文件（.ico 不会被 gzip），交给同一函数兜底
+    server->on(AsyncURIMatcher::exact("/favicon.ico"), HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+        servePrecompiledFile(request, "/web/favicon.ico", "image/x-icon", "public, max-age=86400");
+    });
 }
 
 /**
- * @brief 注册页面路由（HTML页面），支持预压缩 gzip。
- * @param server AsyncWebServer指针
+ * @brief 注册页面路由（SPA 单页应用）
+ * 前端是 history 模式路由，未命中的“页面”路径统一返回 index.html，由 Vue Router 接管。
  */
 void registerPageRoutes(AsyncWebServer *server)
 {
-    server->on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/index.html", "text/html; charset=utf-8"); });
-    server->on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/wifi.html", "text/html; charset=utf-8"); });
-    server->on("/ota", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/ota.html", "text/html; charset=utf-8"); });
-    server->on("/files", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/files.html", "text/html; charset=utf-8"); });
-    server->on("/cards", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/cards.html", "text/html; charset=utf-8"); });
-    server->on("/servo", HTTP_GET, [](AsyncWebServerRequest *request)
-               { servePrecompiledFile(request, "/web/servo.html", "text/html; charset=utf-8"); });
+    server->onNotFound([](AsyncWebServerRequest *request)
+    {
+        const String path = request->url();
+
+        // API 路由和 WebSocket 不处理
+        if (path.startsWith("/api/") || path.startsWith("/ws") || path.startsWith("/update")) {
+            request->send(404, "text/plain", "Not Found");
+            return;
+        }
+
+        // 静态资源永远不能回退成 index.html：否则前端拿到 HTML 当 JS/CSS 用，
+        // 表现为白屏且报 "MIME type of text/html"。这里明确返回 404 便于定位。
+        const int lastSlash = path.lastIndexOf('/');
+        if (path.startsWith("/assets/") || (lastSlash >= 0 && path.indexOf('.', lastSlash) >= 0)) {
+            LOG_W("静态资源未命中: %s", path.c_str());
+            request->send(404, "text/plain", "File not found");
+            return;
+        }
+
+        // 只有页面导航（GET）才回退到 SPA 入口
+        if (request->method() != HTTP_GET) {
+            request->send(404, "text/plain", "Not Found");
+            return;
+        }
+
+        // index.html 必须每次校验，否则 OTA 更新网页后浏览器仍用旧的
+        // index.html（引用已删除的旧哈希资源）→ 白屏
+        servePrecompiledFile(request, "/web/index.html", "text/html; charset=utf-8", "no-cache");
+    });
 }
 
 /**
  * @brief 注册API路由（移除了所有WiFi相关的路由）。
  * @param server AsyncWebServer指针
+ *
+ * 静态路径统一使用 AsyncURIMatcher::exact()：ESPAsyncWebServer 3.x 对普通字符串
+ * 采用 Type::BackwardCompatible（精确 + 子路径前缀），会让 /api/cards 吞掉
+ * /api/cards/read 之类的更具体路由（先注册者优先）。
  */
 void registerApiRoutes(AsyncWebServer *server)
 {
-    // 注意：WiFi管理已迁移至WebSocket，此处不再注册相关路由
-    server->on("/api/battery", HTTP_GET, handleGetBatteryInfo);
-    server->on("/api/system/info", HTTP_GET, handleGetSystemInfo);
-    server->on("/api/system/actions/restart", HTTP_POST, handleRestartSystem);
-    server->on("/api/system/firmware", HTTP_POST, handleOtaUpdateComplete, handleOtaUpdate);
-    server->on("/api/filesystem", HTTP_GET, handleGetFileSystemInfo);
-    server->on("/api/files/sync-check", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleFileSyncCheck);
-    server->on("/api/files/download", HTTP_GET, handleDownloadFile);
-    server->on("/api/files", HTTP_GET, handleListFiles);
-    server->on("/api/files", HTTP_DELETE, handleDeleteResource);
-    server->on("/api/files", HTTP_POST, handleUploadFileComplete, handleUploadFile);
-    server->on("/api/directories", HTTP_POST, handleCreateDirectory);
-    server->on("/api/servo/config", HTTP_GET, handleGetServoConfig);
-    server->on("/api/servo/config", HTTP_PUT, [](AsyncWebServerRequest *request) {}, NULL, handlePutServoConfig);
-    server->on("/api/servo/actions/unlock", HTTP_POST, handleServoUnlock);
-    server->on("/api/servo/actions/lock", HTTP_POST, handleServoLock);
-    server->on("/api/servo/actions/position", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleServoPosition);
-    server->on("/api/cards/read", HTTP_GET, handleReadCard);
-    server->on("/api/cards/test", HTTP_GET, handleTestCard);
-    server->on("/api/cards/logic-enabled", HTTP_GET, handleGetCardLogicConfig);
-    server->on("/api/cards/logic-enabled", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleSetCardLogicConfig);
-    server->on("/api/cards", HTTP_GET, handleGetCardsList);
-    server->on("/api/cards", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleAddCard);
-    server->on("/api/cards", HTTP_DELETE, handleDeleteCard);
+    // ========== 系统 API ==========
+    server->on(AsyncURIMatcher::exact("/api/battery"), HTTP_GET, handleGetBatteryInfo);
+    server->on(AsyncURIMatcher::exact("/api/system/info"), HTTP_GET, handleGetSystemInfo);
+    server->on(AsyncURIMatcher::exact("/api/system/restart"), HTTP_POST, handleRestartSystem);  // WebUI 路由
+    
+    // ========== OTA 升级 ==========
+    server->on(AsyncURIMatcher::exact("/update"), HTTP_POST, handleOtaUpdateComplete, handleOtaUpdate);  // WebUI 路由
+    
+    // ========== 文件管理 ==========
+    // 说明：ESPAsyncWebServer 3.x 里普通字符串路径是“精确匹配 + 子路径前缀匹配”
+    // （Type::BackwardCompatible），所以 /api/files 会吞掉 /api/files/**。
+    // 需要严格区分的路径一律用 AsyncURIMatcher::exact()，动态子路径显式用 "/前缀/*"。
+    server->on(AsyncURIMatcher::exact("/api/files/storage"), HTTP_GET, handleGetFileSystemInfo);
+    server->on(AsyncURIMatcher::exact("/api/files"), HTTP_GET, handleListFiles);                 // ?path= 查询参数
+    // 逐文件比对 SHA-256，返回 skip/upload，WebUI 用它跳过没变化的文件
+    server->on(AsyncURIMatcher::exact("/api/files/sync-check"), HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleFileSyncCheck);
+    server->on(AsyncURIMatcher::exact("/api/files/upload"), HTTP_POST, handleUploadFileComplete, handleUploadFile); // multipart 字段 path
+    server->on("/api/files/*", HTTP_GET, handleDownloadFile);                                    // /api/files/<path>
+    server->on("/api/files/*", HTTP_DELETE, handleDeleteResource);                               // /api/files/<path>
+
+    // ========== 舵机控制 ==========
+    server->on(AsyncURIMatcher::exact("/api/servo"), HTTP_GET, handleGetServoConfig);
+    server->on(AsyncURIMatcher::exact("/api/servo"), HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handlePutServoConfig);
+    server->on(AsyncURIMatcher::exact("/api/servo/test"), HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleServoPosition);
+
+    // ========== 卡片管理 ==========
+    server->on(AsyncURIMatcher::exact("/api/cards"), HTTP_GET, handleGetCardsList);
+    server->on(AsyncURIMatcher::exact("/api/cards"), HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, handleAddCard);
+    server->on(AsyncURIMatcher::exact("/api/cards/read"), HTTP_POST, handleReadCard);
+
+    // RESTful 路由：/api/cards/{uid}
+    // 未启用 ASYNCWEBSERVER_REGEX，故用前缀匹配；UID 由处理函数从 URL 末尾解析
+    server->on("/api/cards/*", HTTP_PUT, [](AsyncWebServerRequest *request) {}, NULL, handleUpdateCard);
+    server->on("/api/cards/*", HTTP_DELETE, handleDeleteCardByUid);
+
+    // WiFi 状态/扫描/连接全部走 WebSocket（wifi/getInfo|scan|test|saveConfig|clearConfig），
+    // 不再提供 REST 版本：阻塞式 WiFi.scanNetworks() 跑在 AsyncTCP 任务里会复位设备。
 }
 
 // =============================================================================
@@ -2996,13 +3289,18 @@ void broadcastLogToWebSocket(int level, const char *tag, const char *message)
     portEXIT_CRITICAL(&logCacheMux);
 
     // 构建单条日志JSON
+    // 必须带 action:"log" 且日志字段放在 data 里：前端 useWebSocket.ts 只处理
+    // 带 action 的消息（事件分发），useLogger.ts 的 handleLogEvent 读取 data。
+    // 缺少 action 的话实时日志会被前端直接丢弃（只有 log/replay 的历史日志能显示）。
     JsonDocument doc;
-    doc["sessionId"] = currentSessionId;
-    doc["id"] = logId;
-    doc["level"] = level;
-    doc["tag"] = tag;
-    doc["message"] = message;
-    doc["timestamp"] = timestamp;
+    doc["action"] = "log";
+    JsonObject data = doc["data"].to<JsonObject>();
+    data["sessionId"] = currentSessionId;
+    data["id"] = logId;
+    data["level"] = level;
+    data["tag"] = tag;
+    data["message"] = message;
+    data["timestamp"] = timestamp;
 
     char response[LOG_SINGLE_ENTRY_JSON_BUFFER_SIZE];
     const size_t responseLength = serializeJson(doc, response, sizeof(response));
