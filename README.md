@@ -24,7 +24,7 @@ doorkey/
 ├── dist/                 # 打包输出：update-package.zip（用于 OTA 升级）
 ├── include/              # PlatformIO 脚手架头文件（非项目逻辑）
 ├── test/                 # PlatformIO 测试区（未维护）
-├── lib/                  # 第三方库（audio、arduino-libhelix），非项目自有逻辑
+├── lib/helix_aac/        # 裁剪后的第三方 AAC 解码器（仅 AAC-LC/ADTS），非项目自有逻辑
 ├── platformio.ini        # PlatformIO 环境与构建配置
 └── partitions.csv        # Flash 分区表（双 OTA 槽 + LittleFS）
 ```

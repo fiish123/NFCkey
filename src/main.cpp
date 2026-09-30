@@ -2,9 +2,7 @@
 #include <Preferences.h>
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
-#include "AudioTools.h"
-#include "AudioTools/Disk/AudioSourceLittleFS.h"
-#include "AudioTools/AudioCodecs/CodecAACHelix.h"
+#include "audio_player.h"
 #include "web_server.h"
 #include "logger.h"
 #include "nfc.h"
@@ -27,7 +25,6 @@
 #define CLK1_PIN 6
 #define DATA1_PIN 7
 #define DAC_EN 10
-volatile float VOLUME1 = 1.0;
 
 // 舵机通信
 #define UART1_TX_servo_PIN 0
@@ -202,12 +199,11 @@ void switchconnect(uint8_t in)
 // ======================================================================
 //  Audio System
 // ======================================================================
+//  音频实现已抽到 src/audio_player.*（AAC解码 / 音量 / I2S输出 / 生命周期）。
+//  这里只保留提示音 ID -> 文件路径 + 音量 的映射。
 
-// 全局音频流
-I2SStream i2s;         // i2s
-AACDecoderHelix helix; // aac decoder (for AudioPlayer)
-AudioSourceLittleFS soundsource("/sound", "aac");
-AudioPlayer player1(soundsource, i2s, helix);
+// 当前提示音的音量 (0.0 - 1.0)，由 getAudioPath() 设置
+static float VOLUME1 = 1.0;
 
 // 音频文件路径映射
 const char *getAudioPath(unsigned int in)
@@ -257,25 +253,6 @@ const char *getAudioPath(unsigned int in)
     return "/sound/audiounknow.aac";
   }
 }
-// 播放音频
-void playAudio(unsigned int in)
-{
-  const char *audioPath = getAudioPath(in);
-
-  player1.setVolume(VOLUME1);
-
-  LOG_I("开始播放音频: %s", audioPath);
-
-  player1.playPath(audioPath);
-
-  LOG_D("音频播放完成: %s", audioPath);
-}
-// 播放线程状态标记
-TaskHandle_t playerListHandle = NULL;
-unsigned char playlist[20] = {};
-volatile unsigned int playlistcount = 0, playlistindex = 0;
-volatile bool isplaying = false;
-
 // 舵机动作
 volatile bool isservobusy = false;
 
@@ -308,45 +285,15 @@ static bool releaseServo()
   return false;
 }
 
-void playerList(void *parameter)
-{
-  while (1)
-  {
-
-    while (playlistcount - playlistindex > 0)
-    {
-      // isplaying = true;
-      playAudio(playlist[playlistindex]);
-      playlistindex++;
-    }
-
-    if (isplaying)
-    {
-      powermanager(1, false);
-      LOG_D("音频队列播放完成");
-
-      player1.end();
-
-      playlistcount = 0;
-      playlistindex = 0;
-      isplaying = false;
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-  }
-}
-// 添加播放任务到列表
+// 添加提示音到播放队列（非阻塞，队列与输出生命周期由 audio 模块管理）
 void addTolist(unsigned int in)
 {
-  if (!isplaying)
-  {
-    isplaying = true;
-    player1.begin();
-  }
-
+  // 提示音期间给 DAC / 5V 供电；断电由 loop() 在进入浅睡眠前统一处理。
+  // powermanager 内部用 isdac_used 去重，重复调用不会重复上电。
   powermanager(1, true);
 
-  playlist[playlistcount] = in;
-  playlistcount++;
+  const char *audioPath = getAudioPath(in);
+  audio::enqueue(audioPath, VOLUME1);
 }
 
 // 加载舵机配置
@@ -491,7 +438,6 @@ void setup()
 {
   // 初始化调试串口
   Serial.begin(115200);
-  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Error);
   LOG_I("系统启动，开始初始化硬件与服务");
 
   // 初始化 UART1
@@ -533,35 +479,25 @@ void setup()
   }
   LOG_I("LittleFS文件系统挂载成功");
 
+  // 初始化音频模块（AAC解码 / 音量 / I2S输出 / 播放任务）
+  // 必须早于任何 addTolist()：initWebServer() 内部要播报"正在连接WiFi"等提示音，
+  // 而队列尚未创建时 enqueue() 会丢弃提示音。
+  // 模块只管 I2S 与解码器的开关；DAC / 5V 供电仍由这里管理：
+  // addTolist() 上电，loop() 进入浅睡眠前断电。
+  if (!audio::begin(CLK1_PIN, LRC1_PIN, DATA1_PIN))
+  {
+    LOG_E("音频模块初始化失败");
+  }
+
+  vTaskDelay(pdMS_TO_TICKS(100));
+
   // 加载卡片数据
   if (!loadCardsDataFromFile() || webdebug)
   {
     LOG_W("授权卡片不可用，启动Web管理服务用于配置");
-    initWebServer();
+    initWebServer(); // au:connectingwifi / successwifi / failwifi
     webServerStartTime = millis();
   }
-
-  // 初始化播放器
-  auto cfg = i2s.defaultConfig();
-  cfg.sample_rate = 44100;
-  cfg.channels = 1;
-  cfg.pin_bck = CLK1_PIN;
-  cfg.pin_data = DATA1_PIN;
-  cfg.pin_ws = LRC1_PIN;
-  i2s.begin(cfg);
-  player1.begin();
-
-  xTaskCreatePinnedToCore(
-      playerList,        // 任务函数
-      "playerlist1",     // 任务名称
-      1024 * 5,          // 堆栈大小（字节）
-      NULL,              // 参数
-      4,                 // 优先级
-      &playerListHandle, // 任务句柄
-      0                  // 核心编号
-  );
-
-  vTaskDelay(pdMS_TO_TICKS(100));
 
   // au:ready
   addTolist(1);
@@ -588,11 +524,15 @@ void loop()
   {
     // 进入浅睡眠
     LOG_D("进入浅睡眠");
+    // 停掉音频（中断播放、关闭I2S、释放解码器、断开DAC电源），
+    // 否则 DMA / DAC 活动会让浅睡眠功耗偏高
+    audio::beforeLightSleep();
     powermanager(1, false);
     powermanager(2, false);
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_light_sleep_start();
     LOG_D("已唤醒");
+    audio::afterLightSleep();
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   else if (digitalRead(IRQ) != HIGH)
@@ -713,10 +653,7 @@ void loop()
     }
   }
 
-  while (isplaying)
-  {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  audio::waitIdle();
 
   // 低电量提醒
   float voltage = read_battery_voltage();
@@ -735,17 +672,11 @@ void loop()
     {
       addTolist(7);
       vTaskDelay(pdMS_TO_TICKS(50));
-      while (isplaying)
-      {
-        vTaskDelay(pdMS_TO_TICKS(500));
-      }
+      audio::waitIdle();
       vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
 
   // 等待音频完成播放
-  while (isplaying)
-  {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  audio::waitIdle();
 }
