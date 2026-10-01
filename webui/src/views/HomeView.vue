@@ -292,16 +292,28 @@ function getBatteryStatusText() {
 }
 
 .status-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-md);
   padding: var(--spacing-lg);
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-border);
   border-radius: var(--radius-lg);
+  overflow: hidden;
   box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
+}
+
+/* 左侧色条：两端内缩，画成一条直线，不跟着卡片圆角拐弯 */
+.status-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-lg);
+  bottom: var(--radius-lg);
+  width: 3px;
+  background: var(--accent-color, var(--color-border));
 }
 
 .status-card:hover {
@@ -310,15 +322,15 @@ function getBatteryStatusText() {
 }
 
 .status-card.state-success {
-  border-left-color: var(--color-success);
+  --accent-color: var(--color-success);
 }
 
 .status-card.state-warning {
-  border-left-color: var(--color-warning);
+  --accent-color: var(--color-warning);
 }
 
 .status-card.state-danger {
-  border-left-color: var(--color-danger);
+  --accent-color: var(--color-danger);
 }
 
 .status-icon {

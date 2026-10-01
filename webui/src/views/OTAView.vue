@@ -11,6 +11,7 @@ import {
   hashPackage,
   syncCheck,
   buildUploadPlan,
+  pruneStalePackageFiles,
   devicePath,
   uploadDataFile,
   uploadFirmware,
@@ -219,8 +220,6 @@ async function startUpload() {
     const pendingFiles: DataFile[] = uploadPlan.value?.pending ?? pkg.dataFiles
     if (pendingFiles.length === 0) {
       currentFile.value = '数据文件均与设备一致，已全部跳过'
-      stage('data').progress = 100
-      completeStage('data')
     } else {
       let doneBytes = 0
       const totalBytes = pendingFiles.reduce((sum, item) => sum + item.size, 0) || 1
@@ -239,10 +238,28 @@ async function startUpload() {
         stage('data').progress = Math.round((doneBytes / totalBytes) * 100)
       }
       currentFile.value = ''
-      completeStage('data')
     }
 
-    // 2) 固件（设备边收边写 Flash，写完会自动重启，必须最后上传）
+    // 2) 清掉设备上不属于本次升级包的旧文件：sync-check 只上传有变化的文件，
+    //    换过哈希名的旧产物（上次构建的 index-xxxx.js.gz）不会自己消失
+    currentFile.value = '清理设备上的旧文件…'
+    try {
+      const pruned = await pruneStalePackageFiles(pkg)
+      if (pruned.removed.length > 0) {
+        toast.info(`已清理 ${pruned.removed.length} 个设备上的旧文件`)
+      }
+      if (pruned.failed.length > 0) {
+        console.warn('部分旧文件清理失败:', pruned.failed)
+      }
+    } catch (error) {
+      console.error('清理旧文件失败:', error)
+      toast.warning('清理设备上的旧文件失败，升级继续')
+    }
+    currentFile.value = ''
+    stage('data').progress = 100
+    completeStage('data')
+
+    // 3) 固件（设备边收边写 Flash，写完会自动重启，必须最后上传）
     activateStage('firmware')
     currentFile.value = pkg.firmware.name
     await uploadFirmware(pkg.firmware, {
@@ -748,11 +765,23 @@ function formatSize(bytes: number): string {
 }
 
 .upload-hint {
+  position: relative;
   background: var(--color-bg-elevated);
-  border-left: 3px solid var(--color-warning);
   padding: var(--spacing-md);
   border-radius: var(--radius-sm);
+  overflow: hidden;
   margin-bottom: var(--spacing-lg);
+}
+
+/* 左侧色条：两端内缩，画成一条直线，不跟着圆角拐弯 */
+.upload-hint::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-sm);
+  bottom: var(--radius-sm);
+  width: 3px;
+  background: var(--color-warning);
 }
 
 .upload-hint p {
@@ -878,26 +907,38 @@ function formatSize(bytes: number): string {
 }
 
 .stage {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-md);
   padding: var(--spacing-md);
   background: var(--color-bg-elevated);
   border-radius: var(--radius-md);
-  border-left: 3px solid var(--color-border);
+  overflow: hidden;
+}
+
+/* 左侧色条：两端内缩，画成一条直线，不跟着圆角拐弯 */
+.stage::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-md);
+  bottom: var(--radius-md);
+  width: 3px;
+  background: var(--accent-color, var(--color-border));
 }
 
 .stage.active {
-  border-left-color: var(--color-primary);
+  --accent-color: var(--color-primary);
   background: var(--color-primary-light);
 }
 
 .stage.completed {
-  border-left-color: var(--color-success);
+  --accent-color: var(--color-success);
 }
 
 .stage.error {
-  border-left-color: var(--color-danger);
+  --accent-color: var(--color-danger);
   background: var(--color-danger-light);
 }
 

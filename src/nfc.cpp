@@ -121,43 +121,44 @@ bool saveCardsToFile()
     return true;
 }
 
-// 匹配卡片
-bool isCardAuthorized(const NFCcard &currentCard)
+// 读卡指令
+void sendCardSearchCommand()
 {
-    // 遍历授权列表中的每一张卡
-    for (size_t i = 0; i < authorizedCards.size(); i++)
+    // 切换通信
+    switchconnect(1);
+
+    // 寻卡指令
+    uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
+
+    while (Serial1.available() > 0)
     {
-        // 先检查长度，长度不同则直接跳过
-        if (currentCard.uidLength != authorizedCards[i].uidLength)
-        {
-            continue;
-        }
-
-        // 长度相同，再逐字节比较UID
-        bool isMatch = true;
-        for (int j = 0; j < currentCard.uidLength; j++)
-        {
-            if (currentCard.uid[j] != authorizedCards[i].uid[j])
-            {
-                isMatch = false; // 发现一个字节不匹配
-                break;           // 跳出内层循环，比较下一张授权卡
-            }
-        }
-
-        // 匹配
-        if (isMatch)
-        {
-            return true;
-        }
+        Serial1.read();
     }
 
-    // 遍历完所有授权卡都没找到匹配的
-    return false;
+    // 通过Serial1发送指令
+    Serial1.write(cardSearchCmd, sizeof(cardSearchCmd));
+
+    unsigned long last, now;
+    last = millis();
+    now = last;
+    while (Serial1.available() < 14 && now - last < 500)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1));
+        now = millis();
+    }
+
+    if (Serial1.available() < 14)
+    {
+        LOG_W("NFC寻卡响应超时: 等待=%lu ms, 已接收=%d/14字节", now - last, Serial1.available());
+    }
 }
 
 // 读卡函数
 NFCcard ReadCard()
 {
+
+    sendCardSearchCommand();
+
     NFCcard card;
     card.uidLength = 0;               // 默认为无效
 
@@ -198,37 +199,61 @@ NFCcard ReadCard()
     return card;  // 未找到有效帧
 }
 
-// 读卡指令
-void sendCardSearchCommand()
+// 匹配卡片
+int isCardAuthorized(bool isfirst)
 {
-    // 切换通信
+    if (isfirst)
+    {
+   // sendCardSearchCommand();
     switchconnect(1);
-
-    // 寻卡指令
-    uint8_t cardSearchCmd[] = {0x20, 0x00, 0x27, 0x00, 0xD8, 0x03};
-
-    // 等待读卡器初始化
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    while (Serial1.available() > 0)
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    NFCcard currentCard;
+    for (size_t i = 0; i < 3; i++)
     {
-        Serial1.read();
+      currentCard=ReadCard();
+      if (currentCard.uidLength==4)
+      {
+        break;
+      }
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    
+    if (currentCard.uidLength!=4)   
+    {
+        return 0;
+    }
+    
+    // 遍历授权列表中的每一张卡
+    for (size_t i = 0; i < authorizedCards.size(); i++)
+    {
+        // 先检查长度，长度不同则直接跳过
+        if (currentCard.uidLength != authorizedCards[i].uidLength)
+        {
+            continue;
+        }
+
+        // 长度相同，再逐字节比较UID
+        bool isMatch = true;
+        for (int j = 0; j < currentCard.uidLength; j++)
+        {
+            if (currentCard.uid[j] != authorizedCards[i].uid[j])
+            {
+                isMatch = false; // 发现一个字节不匹配
+                break;           // 跳出内层循环，比较下一张授权卡
+            }
+        }
+
+        // 匹配
+        if (isMatch)
+        {
+            return 1;
+        }
     }
 
-    // 通过Serial1发送指令
-    Serial1.write(cardSearchCmd, sizeof(cardSearchCmd));
-
-    unsigned long last, now;
-    last = millis();
-    now = last;
-    while (Serial1.available() < 14 && now - last < 1000)
-    {
-        vTaskDelay(pdMS_TO_TICKS(1));
-        now = millis();
-    }
-
-    if (Serial1.available() < 14)
-    {
-        LOG_W("NFC寻卡响应超时: 等待=%lu ms, 已接收=%d/14字节", now - last, Serial1.available());
-    }
+    // 遍历完所有授权卡都没找到匹配的
+    return 2;
 }
+
+

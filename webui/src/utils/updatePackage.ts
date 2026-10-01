@@ -13,6 +13,13 @@
 
 import { readZipEntries } from './zip'
 import { sha256Hex } from './sha256'
+import {
+  PROTECTED_DEVICE_PATHS,
+  deleteDevicePath,
+  joinDevicePath,
+  listDeviceDirectory,
+  type DeviceDirEntry
+} from './deviceFiles'
 
 /** 升级包里不应写入设备的文件（设备本地数据） */
 const EXCLUDED_DATA_FILES = new Set(['cards.json'])
@@ -105,6 +112,101 @@ export function buildUploadPlan(pkg: UpdatePackage, actions: Map<string, SyncAct
     skipped: pkg.dataFiles.length - pending.length,
     pendingBytes: pending.reduce((sum, file) => sum + file.size, 0)
   }
+}
+
+/* ==================== 清理设备上不在包内的旧文件 ==================== */
+
+export interface PruneResult {
+  /** 已删除的设备路径（文件与顺手删掉的空目录） */
+  removed: string[]
+  /** 删除失败的路径与原因 */
+  failed: Array<{ path: string; reason: string }>
+}
+
+/**
+ * 升级包内文件所在的一级目录（/web、/sound），即“由升级包管理的目录”。
+ * 这些目录里不在包内的文件会在升级时删掉；包外的目录（/cards.json 等）绝不动。
+ */
+function managedRoots(pkg: UpdatePackage): string[] {
+  const roots = new Set<string>()
+  for (const file of pkg.dataFiles) {
+    const first = file.path.split('/').filter(Boolean)[0]
+    if (first) roots.add(`/${first}`)
+  }
+  return [...roots]
+}
+
+/** 包里还有没有这个目录下的文件 */
+function isNeededByPackage(directory: string, keep: Set<string>): boolean {
+  for (const path of keep) {
+    if (path.startsWith(`${directory}/`)) return true
+  }
+  return false
+}
+
+async function pruneDirectory(
+  directory: string,
+  keep: Set<string>,
+  result: PruneResult
+): Promise<void> {
+  let entries: DeviceDirEntry[]
+  try {
+    entries = await listDeviceDirectory(directory)
+  } catch (error) {
+    result.failed.push({ path: directory, reason: describeUnknown(error) })
+    return
+  }
+
+  const subdirectories: string[] = []
+  for (const entry of entries) {
+    const fullPath = joinDevicePath(directory, entry.name)
+    if (entry.isDirectory) {
+      subdirectories.push(fullPath)
+      continue
+    }
+    if (keep.has(fullPath) || PROTECTED_DEVICE_PATHS.has(fullPath)) continue
+
+    try {
+      await deleteDevicePath(fullPath)
+      result.removed.push(fullPath)
+    } catch (error) {
+      result.failed.push({ path: fullPath, reason: describeUnknown(error) })
+    }
+  }
+
+  for (const subdirectory of subdirectories) {
+    await pruneDirectory(subdirectory, keep, result)
+    if (isNeededByPackage(subdirectory, keep)) continue
+    // 包里已经没有这个目录了，顺手删掉；非空会被固件拒绝，忽略即可
+    try {
+      await deleteDevicePath(subdirectory)
+      result.removed.push(subdirectory)
+    } catch {
+      /* 目录仍非空：留给下次 */
+    }
+  }
+}
+
+/**
+ * 删除设备上不在升级包内的数据文件。
+ *
+ * 升级时只按 sync-check 的结果上传有变化的文件，改名/换哈希的旧文件
+ * （例如上一次构建的 index-B7vezpgC.js.gz）不会自己消失，日积月累会占满
+ * LittleFS。这里以升级包为准，把受管目录里多余的文件清掉。
+ */
+export async function pruneStalePackageFiles(pkg: UpdatePackage): Promise<PruneResult> {
+  const keep = new Set(pkg.dataFiles.map(devicePath))
+  const result: PruneResult = { removed: [], failed: [] }
+
+  for (const root of managedRoots(pkg)) {
+    if (root === '/' || PROTECTED_DEVICE_PATHS.has(root)) continue
+    await pruneDirectory(root, keep, result)
+  }
+  return result
+}
+
+function describeUnknown(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export class UploadCancelled extends Error {

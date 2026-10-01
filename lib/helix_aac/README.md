@@ -1,9 +1,8 @@
 # helix_aac - trimmed AAC decoder for NFCkey
 
 Minimal, self-contained copy of the AAC decoder used by the door access
-firmware. It replaces the former dependency on the Arduino AudioTools library
-(`lib/audio`, 74 MB) and the full `arduino-libhelix` package
-(`lib/arduino-libhelix-0.9.2`, MP3 + AAC + SBR + examples + docs).
+firmware. Only AAC-LC decoding is included. The former AudioTools and full
+arduino-libhelix dependencies have been removed from the repository.
 
 ## Provenance and licence
 

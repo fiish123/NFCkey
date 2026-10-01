@@ -25,7 +25,7 @@ bool loadCardsDataFromFile();
 bool saveCardsToFile();
 
 // 匹配卡片
-bool isCardAuthorized(const NFCcard &currentCard);
+int isCardAuthorized(bool isfirst);
 
 // 读卡函数
 NFCcard ReadCard();

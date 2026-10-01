@@ -79,6 +79,9 @@ void startOutput() {
 }
 
 void stopOutput() {
+  if (s_outputActive && !s_stopRequested) {
+    vTaskDelay(pdMS_TO_TICKS(kDrainDelayMs));
+  }
   i2sClose();
   s_decoder.end();
   if (s_powerHook != nullptr) s_powerHook(false);
@@ -92,6 +95,14 @@ void playFile(const Item &item, bool &wasStopped) {
   File file = LittleFS.open(item.path, "r");
   if (!file) {
     LOG_W("音频文件打开失败: %s", item.path);
+    return;
+  }
+
+  // Independent AAC files must not share the overlap or staged input.
+  s_decoder.end();
+  if (!s_decoder.begin()) {
+    LOG_E("AAC解码器复位失败: %s", item.path);
+    file.close();
     return;
   }
 
@@ -182,10 +193,6 @@ void playFile(const Item &item, bool &wasStopped) {
                              fadeInFrames, s_stereo);
     i2sWrite(s_stereo, (size_t)frames);
   }
-
-  // Let the DMA buffers drain before the caller can close the port, so the
-  // last samples (and the fade-out) are actually audible.
-  if (!s_stopRequested) vTaskDelay(pdMS_TO_TICKS(kDrainDelayMs));
 
   file.close();
   LOG_D("音频播放完成: %s", item.path);

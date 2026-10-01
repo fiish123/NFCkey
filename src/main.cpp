@@ -179,18 +179,19 @@ void switchconnect(uint8_t in)
 
   if (in == 1)
   {
+    
     LOG_D("串口切换至读卡器模式 (9600 baud)");
     Serial1.end();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1));
     Serial1.begin(UART_reader_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_reader_PIN);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
   else
   {
     LOG_D("串口切换至舵机模式 (115200 baud)");
     powermanager(2, true);
     Serial1.end();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1));
     Serial1.begin(UART_servo_BAUDRATE, SERIAL_8N1, UART1_RX_PIN, UART1_TX_servo_PIN);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
@@ -199,10 +200,6 @@ void switchconnect(uint8_t in)
 // ======================================================================
 //  Audio System
 // ======================================================================
-//  音频实现已抽到 src/audio_player.*（AAC解码 / 音量 / I2S输出 / 生命周期）。
-//  这里只保留提示音 ID -> 文件路径 + 音量 的映射。
-
-// 当前提示音的音量 (0.0 - 1.0)，由 getAudioPath() 设置
 static float VOLUME1 = 1.0;
 
 // 音频文件路径映射
@@ -266,8 +263,8 @@ static bool tryAcquireServo()
 {
   if (xSemaphoreTake(servolock, 0) == pdTRUE)
   {
-    switchconnect(2); // 切换到舵机通信
     isservobusy = true;
+    switchconnect(2); // 切换到舵机通信
     return true;
   }
   return false;
@@ -285,11 +282,9 @@ static bool releaseServo()
   return false;
 }
 
-// 添加提示音到播放队列（非阻塞，队列与输出生命周期由 audio 模块管理）
+// 添加提示音到播放队列
 void addTolist(unsigned int in)
 {
-  // 提示音期间给 DAC / 5V 供电；断电由 loop() 在进入浅睡眠前统一处理。
-  // powermanager 内部用 isdac_used 去重，重复调用不会重复上电。
   powermanager(1, true);
 
   const char *audioPath = getAudioPath(in);
@@ -428,7 +423,7 @@ bool executePosition(uint16_t position)
 bool executeUnlock() { return executePosition(unlockPosition); }
 bool executeLock() { return executePosition(lockPosition); }
 
-bool webdebug = true;
+bool webdebug = false;
 
 // ======================================================================
 //  Initialization (setup)
@@ -480,10 +475,6 @@ void setup()
   LOG_I("LittleFS文件系统挂载成功");
 
   // 初始化音频模块（AAC解码 / 音量 / I2S输出 / 播放任务）
-  // 必须早于任何 addTolist()：initWebServer() 内部要播报"正在连接WiFi"等提示音，
-  // 而队列尚未创建时 enqueue() 会丢弃提示音。
-  // 模块只管 I2S 与解码器的开关；DAC / 5V 供电仍由这里管理：
-  // addTolist() 上电，loop() 进入浅睡眠前断电。
   if (!audio::begin(CLK1_PIN, LRC1_PIN, DATA1_PIN))
   {
     LOG_E("音频模块初始化失败");
@@ -514,7 +505,7 @@ void setup()
 // ======================================================================
 //  Main Loop
 // ======================================================================
-
+bool isfirstread=true;
 void loop()
 {
   serviceScheduledRestart();
@@ -524,8 +515,9 @@ void loop()
   {
     // 进入浅睡眠
     LOG_D("进入浅睡眠");
-    // 停掉音频（中断播放、关闭I2S、释放解码器、断开DAC电源），
-    // 否则 DMA / DAC 活动会让浅睡眠功耗偏高
+
+    isfirstread-true;
+    // 停掉音频
     audio::beforeLightSleep();
     powermanager(1, false);
     powermanager(2, false);
@@ -575,16 +567,14 @@ void loop()
     // au:wait
     addTolist(2);
 
-    sendCardSearchCommand();
-
-    // 读取标签
-    NFCcard currentcard;
-    currentcard = ReadCard();
+    //sendCardSearchCommand();
+    bool cardresult=isCardAuthorized(isfirstread);
+    isfirstread=false;
 
     // 卡数据有效检查
-    if (currentcard.uidLength != 0)
+    if (cardresult != 0)
     {
-      if (isCardAuthorized(currentcard))
+      if (cardresult==1)
       {
         // 匹配
         LOG_I("卡片验证通过，执行解锁动作");
@@ -652,8 +642,6 @@ void loop()
       return;
     }
   }
-
-  audio::waitIdle();
 
   // 低电量提醒
   float voltage = read_battery_voltage();

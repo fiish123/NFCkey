@@ -22,9 +22,8 @@ namespace audio {
 /// Multiplication factor for a requested volume in [0.0 .. 1.0].
 float volumeFactor(float volume);
 
-/// Number of frames used for the linear fade at the start and the end of a
-/// prompt. The AudioTools FadeStream ramped over a whole 1024 frame buffer;
-/// this is the equivalent anti-click ramp scaled down.
+/// Short linear fade-in in PCM frames. The final decoded AAC frame is faded
+/// out over its full length by applyVolume().
 constexpr int kFadeFrames = 256;
 
 /**

@@ -636,6 +636,7 @@ const sortedFiles = computed(() => {
 }
 
 .file-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
@@ -643,6 +644,7 @@ const sortedFiles = computed(() => {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
+  overflow: hidden;
   transition: all 0.2s ease;
 }
 
@@ -651,9 +653,19 @@ const sortedFiles = computed(() => {
   box-shadow: var(--shadow-sm);
 }
 
+/* 目录条目的左侧色条：两端内缩，画成一条直线，不跟着卡片圆角拐弯 */
 .file-item.directory {
   cursor: pointer;
-  border-left: 3px solid var(--color-primary);
+}
+
+.file-item.directory::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-md);
+  bottom: var(--radius-md);
+  width: 3px;
+  background: var(--color-primary);
 }
 
 .file-item .file-icon {

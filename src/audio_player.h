@@ -9,10 +9,8 @@
  * @brief Minimal AAC prompt player: decoder + volume + I2S output + task and
  *        light-sleep lifecycle.
  *
- * This replaces the former dependency on the Arduino AudioTools library
- * (lib/audio) and its AudioSourceLittleFS / AACDecoderHelix / AudioPlayer /
- * I2SStream / VolumeStream stack. Only the pieces this firmware actually uses
- * are kept:
+ * This is a self-contained AAC prompt chain. Only the pieces this firmware
+ * actually uses are kept:
  *
  *   - AAC-LC / ADTS decoding through the trimmed vendored Helix decoder
  *     (lib/helix_aac, see lib/helix_aac/README.md)

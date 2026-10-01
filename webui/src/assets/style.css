@@ -619,12 +619,23 @@ a:hover {
 
 /* log entries + level colors (information-bearing) */
 .log-entry {
+    position: relative;
     display: flex; flex-direction: column; gap: var(--spacing-xs);
     padding: var(--spacing-xs) var(--spacing-sm); margin-bottom: var(--spacing-xs);
     border-radius: var(--radius-sm);
-    border-left: 2px solid transparent;
+    overflow: hidden;
     transition: var(--transition-fast);
     word-break: break-word;
+}
+/* 左侧级别色条：两端内缩，画成一条直线，不跟着圆角拐弯 */
+.log-entry::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: var(--radius-sm);
+    bottom: var(--radius-sm);
+    width: 2px;
+    background: var(--accent-color, transparent);
 }
 .log-entry:hover { background: var(--color-bg-hover); }
 .log-entry.hidden { display: none; }
@@ -662,27 +673,27 @@ a:hover {
   white-space: nowrap;
 }
 
-.log-entry.error { background: rgba(220, 38, 38, 0.06); border-left-color: var(--color-danger); }
+.log-entry.error { background: rgba(220, 38, 38, 0.06); --accent-color: var(--color-danger); }
 .log-entry.error .log-tag { background: rgba(220, 38, 38, 0.12); color: var(--color-danger-hover); }
 .log-entry.error .log-level-badge { background: var(--color-danger); color: #fff; }
 .log-entry.error .log-message { color: var(--color-danger-hover); }
 
-.log-entry.warn { background: rgba(217, 119, 6, 0.06); border-left-color: var(--color-warning); }
+.log-entry.warn { background: rgba(217, 119, 6, 0.06); --accent-color: var(--color-warning); }
 .log-entry.warn .log-tag { background: rgba(217, 119, 6, 0.14); color: var(--color-warning-hover); }
 .log-entry.warn .log-level-badge { background: var(--color-warning); color: #fff; }
 .log-entry.warn .log-message { color: var(--color-warning-hover); }
 
-.log-entry.info { background: rgba(14, 116, 144, 0.05); border-left-color: var(--color-primary); }
+.log-entry.info { background: rgba(14, 116, 144, 0.05); --accent-color: var(--color-primary); }
 .log-entry.info .log-tag { background: rgba(14, 116, 144, 0.1); color: var(--color-primary-hover); }
 .log-entry.info .log-level-badge { background: var(--color-primary); color: #fff; }
 .log-entry.info .log-message { color: var(--color-primary-hover); }
 
-.log-entry.debug { background: rgba(100, 116, 139, 0.05); border-left-color: var(--color-text-muted); }
+.log-entry.debug { background: rgba(100, 116, 139, 0.05); --accent-color: var(--color-text-muted); }
 .log-entry.debug .log-tag { background: rgba(100, 116, 139, 0.12); color: var(--color-text-secondary); }
 .log-entry.debug .log-level-badge { background: var(--color-text-muted); color: #fff; }
 .log-entry.debug .log-message { color: var(--color-text-muted); }
 
-.log-entry.verbose { border-left-color: var(--color-text-light); }
+.log-entry.verbose { --accent-color: var(--color-text-light); }
 .log-entry.verbose .log-tag { background: rgba(148, 163, 184, 0.16); color: var(--color-text-secondary); }
 .log-entry.verbose .log-level-badge { background: var(--color-text-light); color: #fff; }
 .log-entry.verbose .log-message { color: var(--color-text-light); }

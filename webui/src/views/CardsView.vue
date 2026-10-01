@@ -275,93 +275,97 @@ const cardCount = computed(() => cards.value.length)
     </div>
 
     <!-- 添加卡片对话框 -->
-    <div v-if="showAddDialog" class="modal-overlay" @click.self="closeAddDialog">
-      <div class="modal">
-        <div class="modal-header">
-          <h3>添加新卡片</h3>
-          <button @click="closeAddDialog" class="modal-close">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
+    <Transition name="modal">
+      <div v-if="showAddDialog" class="modal-overlay" @click.self="closeAddDialog">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>添加新卡片</h3>
+            <button @click="closeAddDialog" class="modal-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div v-if="!waitingForCard">
+              <div class="input-group">
+                <label for="cardName">卡片名称</label>
+                <input
+                  id="cardName"
+                  type="text"
+                  v-model="newCardName"
+                  placeholder="例如：张三的门禁卡"
+                  @keyup.enter="startAddCard"
+                />
+              </div>
+            </div>
+            <div v-else class="waiting-state">
+              <div class="nfc-animation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                  <line x1="2" y1="10" x2="22" y2="10"></line>
+                </svg>
+              </div>
+              <p>请将卡片靠近读卡器...</p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <div class="btn-group horizontal">
+              <button @click="closeAddDialog" class="btn btn-secondary">取消</button>
+              <button 
+                v-if="!waitingForCard"
+                @click="startAddCard" 
+                :disabled="!newCardName.trim()"
+                class="btn btn-primary"
+              >
+                开始读卡
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="modal-body">
-          <div v-if="!waitingForCard">
+      </div>
+    </Transition>
+
+    <!-- 重命名对话框 -->
+    <Transition name="modal">
+      <div v-if="showRenameDialog" class="modal-overlay" @click.self="closeRenameDialog">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>重命名卡片</h3>
+            <button @click="closeRenameDialog" class="modal-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
             <div class="input-group">
-              <label for="cardName">卡片名称</label>
+              <label for="renameName">新名称</label>
               <input
-                id="cardName"
+                id="renameName"
                 type="text"
-                v-model="newCardName"
-                placeholder="例如：张三的门禁卡"
-                @keyup.enter="startAddCard"
+                v-model="renameCardName"
+                @keyup.enter="renameCard"
               />
             </div>
           </div>
-          <div v-else class="waiting-state">
-            <div class="nfc-animation">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="5" width="20" height="14" rx="2"></rect>
-                <line x1="2" y1="10" x2="22" y2="10"></line>
-              </svg>
+          <div class="modal-footer">
+            <div class="btn-group horizontal">
+              <button @click="closeRenameDialog" class="btn btn-secondary">取消</button>
+              <button 
+                @click="renameCard" 
+                :disabled="!renameCardName.trim()"
+                class="btn btn-primary"
+              >
+                确定
+              </button>
             </div>
-            <p>请将卡片靠近读卡器...</p>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <div class="btn-group horizontal">
-            <button @click="closeAddDialog" class="btn btn-secondary">取消</button>
-            <button 
-              v-if="!waitingForCard"
-              @click="startAddCard" 
-              :disabled="!newCardName.trim()"
-              class="btn btn-primary"
-            >
-              开始读卡
-            </button>
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- 重命名对话框 -->
-    <div v-if="showRenameDialog" class="modal-overlay" @click.self="closeRenameDialog">
-      <div class="modal">
-        <div class="modal-header">
-          <h3>重命名卡片</h3>
-          <button @click="closeRenameDialog" class="modal-close">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-        <div class="modal-body">
-          <div class="input-group">
-            <label for="renameName">新名称</label>
-            <input
-              id="renameName"
-              type="text"
-              v-model="renameCardName"
-              @keyup.enter="renameCard"
-            />
-          </div>
-        </div>
-        <div class="modal-footer">
-          <div class="btn-group horizontal">
-            <button @click="closeRenameDialog" class="btn btn-secondary">取消</button>
-            <button 
-              @click="renameCard" 
-              :disabled="!renameCardName.trim()"
-              class="btn btn-primary"
-            >
-              确定
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    </Transition>
   </main>
 </template>
 
@@ -427,15 +431,27 @@ const cardCount = computed(() => cards.value.length)
 }
 
 .card-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-md) var(--spacing-lg);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-light);
-  border-left: 3px solid var(--color-primary);
   border-radius: var(--radius-md);
+  overflow: hidden;
   transition: all 0.2s ease;
+}
+
+/* 左侧色条：两端内缩，画成一条直线，不跟着卡片圆角拐弯 */
+.card-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-md);
+  bottom: var(--radius-md);
+  width: 3px;
+  background: var(--color-primary);
 }
 
 .card-item:hover {
@@ -550,6 +566,34 @@ const cardCount = computed(() => cards.value.length)
   box-shadow: var(--shadow-xl);
   max-width: 28rem;
   width: 100%;
+}
+
+/* 进入/退出动画：遮罩淡入淡出，卡片轻微上浮 + 缩放 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-enter-active .modal,
+.modal-leave-active .modal {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .modal,
+.modal-leave-to .modal {
+  opacity: 0;
+  transform: scale(0.98) translateY(0.5rem);
+}
+
+/* 退场时遮罩已经在淡出，不该再拦截点击 */
+.modal-leave-active {
+  pointer-events: none;
 }
 
 .modal-header {

@@ -6,6 +6,7 @@ import LogWindow from './components/LogWindow.vue'
 import Toast from './components/Toast.vue'
 import { useWebSocket } from './composables/useWebSocket'
 import { useLogger } from './composables/useLogger'
+import { sweepStaleWebAssets } from './utils/deviceFiles'
 
 const { connectWebSocket, disconnectWebSocket } = useWebSocket()
 const { initLogger, cleanupLogger } = useLogger()
@@ -14,6 +15,18 @@ const { initLogger, cleanupLogger } = useLogger()
 // 这样它们首次 sendWsRequest 时连接已经在建立中
 connectWebSocket()
 initLogger()
+
+// 旧构建产物自检：上一次升级若由旧版网页执行，换过哈希名的 /web/assets/*.gz
+// 会留在 flash 里；本页引用的资源才是该留的那一份，其余同名前缀的旧文件删掉
+sweepStaleWebAssets()
+  .then(removed => {
+    if (removed.length > 0) {
+      console.info('已清理设备上的旧网页资源:', removed)
+    }
+  })
+  .catch(() => {
+    /* 自检失败不影响使用 */
+  })
 
 onUnmounted(() => {
   cleanupLogger()

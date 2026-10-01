@@ -28,20 +28,24 @@ const dragOffset = ref({ x: 0, y: 0 })
 const logOutputRef = ref<HTMLElement | null>(null)
 const logWindowRef = ref<HTMLElement | null>(null)
 
+/**
+ * 是否跟随最新日志。
+ * 只有用户停在底部时才自动下滑；手动上滚查看历史后暂停，
+ * 滚回底部（或重新展开窗口）再恢复。
+ */
+const stickToBottom = ref(true)
+
 let lastRenderedSessionId: number | null = null
 
 // 计算可见的未读数
 const visibleUnreadCount = computed(() => unreadCount.value)
 
-// 监听日志变化，自动滚动
+// 监听日志变化，自动滚动到底部
 watch(() => visibleLogs.value.length, async () => {
-  if (!visible.value || minimized.value) return
-  
+  if (!visible.value || minimized.value || !stickToBottom.value) return
+
   await nextTick()
-  const output = logOutputRef.value
-  if (output && isNearBottom(output)) {
-    scrollToBottom()
-  }
+  scrollToBottom()
 })
 
 // 窗口开着时，新日志直接算已读——否则未读数一直累积，得关掉再打开才会清零
@@ -57,8 +61,13 @@ function toggle() {
   
   if (visible.value) {
     clearUnread()
+    // 窗口每次打开都是新 DOM（v-if），滚动位置从顶部开始，这里直接贴到底部
+    stickToBottom.value = true
     // 显示之后才能量到尺寸，此时按当前视口校正一次位置
-    nextTick().then(clampToViewport)
+    nextTick().then(() => {
+      clampToViewport()
+      scrollToBottom()
+    })
   }
   
   saveState()
@@ -69,12 +78,21 @@ function minimize() {
   minimized.value = !minimized.value
   nextTick().then(clampToViewport)
   
-  // 展开时把期间累积的未读清掉
+  // 展开时把期间累积的未读清掉，并重新贴到底部（body 是 v-if，重新挂载后滚动位置会丢失）
   if (!minimized.value) {
     clearUnread()
+    stickToBottom.value = true
+    nextTick().then(scrollToBottom)
   }
   
   saveState()
+}
+
+// 日志区滚动：用户滚离底部就暂停跟随，滚回底部再恢复
+function handleOutputScroll() {
+  const output = logOutputRef.value
+  if (!output) return
+  stickToBottom.value = isNearBottom(output)
 }
 
 // 过滤级别变化
@@ -263,7 +281,13 @@ onMounted(() => {
   window.addEventListener('resize', handleViewportResize)
   window.addEventListener('orientationchange', handleViewportResize)
   // 恢复的历史位置可能在更小的窗口里已经越界
-  nextTick().then(clampToViewport)
+  nextTick().then(() => {
+    clampToViewport()
+    // 恢复出来的打开状态也要直接停在最新日志上
+    if (visible.value && !minimized.value) {
+      scrollToBottom()
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -376,6 +400,7 @@ onUnmounted(() => {
           role="log"
           aria-live="polite"
           aria-atomic="false"
+          @scroll="handleOutputScroll"
         >
           <template v-for="(log, index) in visibleLogs" :key="index">
             <!-- 设备重启分隔条：区分重启前后的日志 -->

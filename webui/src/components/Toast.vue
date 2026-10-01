@@ -60,6 +60,7 @@ function getIcon(type: string): IconName {
 }
 
 .toast {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -69,25 +70,36 @@ function getIcon(type: string): IconName {
   background: var(--color-bg-card);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  border-left: 4px solid;
+  overflow: hidden;
   pointer-events: auto;
   cursor: pointer;
 }
 
+/* 左侧色条：两端内缩，画成一条直线，不跟着圆角拐弯 */
+.toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-md);
+  bottom: var(--radius-md);
+  width: 4px;
+  background: var(--accent-color, var(--color-primary));
+}
+
 .toast-info {
-  border-left-color: var(--color-primary);
+  --accent-color: var(--color-primary);
 }
 
 .toast-success {
-  border-left-color: var(--color-success);
+  --accent-color: var(--color-success);
 }
 
 .toast-warning {
-  border-left-color: var(--color-warning);
+  --accent-color: var(--color-warning);
 }
 
 .toast-error {
-  border-left-color: var(--color-danger);
+  --accent-color: var(--color-danger);
 }
 
 .toast-icon {
